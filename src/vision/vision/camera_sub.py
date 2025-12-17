@@ -28,7 +28,7 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import CompressedImage, CameraInfo
+from sensor_msgs.msg import CompressedImage, CameraInfo, Image
 from rclpy.callback_groups import ReentrantCallbackGroup
 
 class CameraSubscriber(Node):
@@ -92,6 +92,8 @@ class CameraSubscriber(Node):
             callback_group=self.cb_group
         )
         self.sub_camerainfo
+
+        self.camera_undist_pub = self.create_publisher(Image, "camera_image/undistorted", 10)
 
 
     def camera_info_callback(self, msg: CameraInfo):
@@ -167,8 +169,17 @@ class CameraSubscriber(Node):
         # Undistort if calibration is available
         if self.camera_matrix is not None and self.dist_coeffs is not None:
             self.frame = cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
+
         else:
             self.frame = frame
+
+        # Keep numpy frame for display
+        self.undist = self.frame
+
+        # Convert to ROS Image and publish
+        img_msg = self.bridge.cv2_to_imgmsg(self.frame, encoding='bgr8')
+        img_msg.header = msg.header          # keep timestamp/frame_id from incoming image
+        self.camera_undist_pub.publish(img_msg)
 
     def process_key(self):
         '''
@@ -190,7 +201,7 @@ class CameraSubscriber(Node):
         while rclpy.ok():
             if self.frame is not None:
                 # Display the compressed image 
-                cv2.imshow('Camera Compressed undistorted', self.frame)
+                cv2.imshow('Camera Compressed undistorted', self.undist)
                                     
             if not self.process_key():
                 break
@@ -205,10 +216,9 @@ def main():
     node.get_logger().info('CameraSubscriber node started')
 
     try:
-        # Entweder spin() ohne GUI:
-        #rclpy.spin(node)
-        # oder, wenn du das Bild sehen willst:
-        node.display_loop()
+        rclpy.spin(node)
+        # Visualize Display
+        #node.display_loop()
     except KeyboardInterrupt:
         pass
     finally:
