@@ -1,0 +1,47 @@
+# ROS 2 / Colcon / CMake ignore
+build/
+install/
+log/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+colcon_command_prefix*
+ament_cmake_core/
+ament_index/
+
+# Python build artefacts
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# IDEs & Editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# Systemfiles
+.DS_Store
+Thumbs.db
+
+# Local configs
+.venv
+.venv_tut_4
+.env
+*.local
+*Zone.Identifier
+*.tar.gz
+.devcontainer
+
+my_venv/
+venv/
+*/venv/
+*/my_venv/
