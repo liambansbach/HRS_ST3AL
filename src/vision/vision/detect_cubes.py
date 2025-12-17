@@ -34,7 +34,7 @@ class CubeDetector(Node):
             depth=1,
         )
 
-        self.sub_compressed = self.create_subscription(
+        self.sub_distorted = self.create_subscription(
             Image,
             'camera_image/undistorted',
             self.camera_cb,
@@ -43,13 +43,22 @@ class CubeDetector(Node):
         )
 
     def camera_cb(self, msg: Image):
-        # Convert compressed image to OpenCV BGR
+        # Convert image to OpenCV BGR
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().warn(f"Failed to convert image: {e}")
             return
         
+        self.frame = frame
+
+
+    """
+    TODO
+    - assign colors to cubes based on inner square color
+    - publish cube poses and colors
+    - optional: improve detection (e.g., filter by size, use contours better)
+    """
 
     def find_squares(self, img):
         """Detect squares in the image."""
@@ -60,27 +69,40 @@ class CubeDetector(Node):
         edged = cv2.Canny(blurred, 50, 150)
         contours, _ = cv2.findContours(edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
+        # Filter for squares n found contours
         for cnt in contours:
             cnt_len = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.02 * cnt_len, True)
             if len(approx) == 4 and cv2.isContourConvex(approx):
                 area = cv2.contourArea(approx)
-                if area > 1000:
+                if area > 1000: # TODO gegebenenfalls threshold für noise benutzen
                     squares.append(approx)
         return squares
     
+    
+
+    def draw_squares(self, img):
+        """Draw detected squares on the image."""
+        squares = self.find_squares(img)
+        for square in squares:
+            cv2.drawContours(img, [square], -1, (0, 255, 0), 3)
+        return img
+
 
     def display_loop(self):
         """Main loop to display detected cubes."""
         while rclpy.ok():
-            rclpy.spin_once(self)
             if self.frame is not None:
-                squares = self.find_squares(self.frame)
-                display_frame = self.frame.copy()
-                cv2.drawContours(display_frame, squares, -1, (0, 255, 0), 3)
+
+                display_frame = self.draw_squares(self.frame.copy())
                 cv2.imshow("Detected Cubes", display_frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27 or key == ord('q'):
+                break
+                
+            rclpy.spin_once(self, timeout_sec=0.01)
+
         cv2.destroyAllWindows()
 
 def main():

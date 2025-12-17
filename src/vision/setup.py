@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_sub = vision.camera_sub:main',
+            'detect_cubes = vision.detect_cubes:main',
         ],
     },
 )
