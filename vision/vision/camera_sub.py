@@ -24,7 +24,7 @@ import numpy as np
 import cv2
 from cv_bridge import CvBridge
 import yaml
-
+from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -55,16 +55,11 @@ class CameraSubscriber(Node):
         )
 
         # Load calibration file parameter
-        default_calib = Path(__file__).resolve().parents[1] /  "calibration.yaml"
-        
-
-        self.declare_parameter(
-            'calibration_file',
-            str(default_calib) 
-        )
-
+        pkg_share = Path(get_package_share_directory('vision'))
+        default_calib = pkg_share / 'config' / 'calibration.yaml'
+        self.declare_parameter('calibration_file', str(default_calib))
         calib_file = self.get_parameter('calibration_file').get_parameter_value().string_value
-        self.get_logger().info(f"Using calibration file: {calib_file}")
+        self.get_logger().info(f"Using calibration file: {calib_file}") 
 
         # Bridge for CompressedImage -> OpenCV
         self.bridge = CvBridge()
