@@ -8,6 +8,12 @@
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
+  <depend>cv_bridge</depend>
+  <depend>sensor_msgs</depend>
+  <depend>image_transport</depend>
+
+  <exec_depend>mediapipe</exec_depend> 
+  <exec_depend>ainex_interfaces</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -216,9 +216,10 @@ def main():
     node.get_logger().info('CameraSubscriber node started')
 
     try:
-        rclpy.spin(node)
+        # NOT Visualize Display
+        #rclpy.spin(node)
         # Visualize Display
-        #node.display_loop()
+        node.display_loop()
     except KeyboardInterrupt:
         pass
     finally:

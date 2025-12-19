@@ -9,8 +9,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 
@@ -19,7 +18,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 from geometry_msgs.msg import Point
-from pose_interfaces.msg import UpperbodyPose
+from ainex_interfaces.msg import UpperbodyPose
 
 import traceback
 
@@ -34,6 +33,13 @@ class MPPose(Node):
         self._next_run_ns = 0
         self._run_period_ns = int(1e9 / 30)  # 30 Hz
         self._cb_count = 0
+
+        # QoS: Reliable to ensure camera_info is received
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
 
         '''
         RIG JOINT NAMES:
@@ -77,9 +83,9 @@ class MPPose(Node):
 
         self.camera_sub = self.create_subscription(
             Image,
-            '/image_raw',
+            "camera_image/undistorted",
             self.image_callback,
-            qos_profile_sensor_data
+            sensor_qos
         )
 
         self.rig_pub = self.create_publisher(
