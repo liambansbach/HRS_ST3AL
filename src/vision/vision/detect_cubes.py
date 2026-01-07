@@ -16,6 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from rclpy.callback_groups import ReentrantCallbackGroup
+from ainex_interfaces.msg import CubeCenter, CubeCenterList
 
 class CubeDetector(Node):
     def __init__(self):
@@ -27,12 +28,21 @@ class CubeDetector(Node):
         self.bridge = CvBridge()
         self.frame = None
 
-        self.hsv_ranges = {                # TODO ggf boundaries tighter
+        self.hsv_ranges = {
+        """    "R": [((0, 120, 70), (10, 255, 255))],
+            "G": [((55, 200, 200), (60, 255, 255))],
+            "B": [((90, 200, 200), (128, 255, 255))]
+        }"""
+                        # TODO ggf boundaries tighter
         "green": [((60, 70, 40), (90, 255, 255))],
         "blue":  [((95, 60, 40), (125, 255, 255))],
         "red":   [((0, 70, 40), (10, 255, 255)),
                 ((165, 70, 40), (179, 255, 255))],
         }
+
+        # Cube center
+        self.center_coords = []
+        self.colors = []
 
         # Noise filters (tune)
         self.min_area = 800
@@ -59,10 +69,14 @@ class CubeDetector(Node):
             callback_group=self.cb_group,
         )
 
+        self.centers_pub = self.create_publisher(CubeCenterList, '/cube_centers', 10)
+
     def camera_cb(self, msg: Image):
         # Convert image to OpenCV BGR
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            results, combined = self.detect_all_colors(frame)
+            self.publish_cube_centers(results, msg.header)
         except Exception as e:
             self.get_logger().warn(f"Failed to convert image: {e}")
             return
@@ -83,6 +97,7 @@ class CubeDetector(Node):
     def make_color_mask(self, hsv, color_ranges):
         """creates a binary mask from hsv; depends on input color_range"""
         mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+
         for lower, upper in color_ranges:
             m = cv2.inRange(
                 hsv,
@@ -165,9 +180,6 @@ class CubeDetector(Node):
     TODO
     maybe add metrics and is_cube_candidate later for more accuracte shape validation
     """
-    def shape_metrics(self, contours):
-        pass
-
 
     def is_cube_candidate(self, contour) -> bool:
         area = cv2.contourArea(contour)
@@ -180,7 +192,7 @@ class CubeDetector(Node):
         if w < 1 or h < 1:
             return False    
 
-        # Kriterien zur besseren shape validation von chat
+        # Kriterien zur besseren shape validation
         aspect = max(w, h) / min(w, h)           # >= 1
         rect_area = w * h
         extent = area / max(rect_area, 1e-6)     # how well it fills its rotated box
@@ -213,7 +225,7 @@ class CubeDetector(Node):
             center = self.find_contour_center(c)
             bbox_center, (w, h), angle, box = self.bbox(c)
 
-            # Von chat vorgeschlagen, vielleicht später relevant
+            #vielleicht später relevant
             dets.append({
                 "color": color_name,
                 "contour": c,
@@ -238,6 +250,29 @@ class CubeDetector(Node):
 
         return results, combined
 
+    def publish_cube_centers(self, results, header):
+        msg = CubeCenterList()
+        msg.header = header
+
+        msg.cubes = []
+        for color, dets in results.items():
+            for det in dets:
+                cx, cy = det["bbox_center"]
+
+                c = CubeCenter()
+                c.color = color
+                c.x = float(cx)
+                c.y = float(cy)
+
+                msg.cubes.append(c)
+
+        self.centers_pub.publish(msg)
+
+        self.get_logger().info(
+            f"\n\nPublishing {len(msg.cubes)} cube centers: " +
+            ", ".join([f'({c.x:.1f},{c.y:.1f})' for c in msg.cubes])
+        )
+
 
     def draw_detections(self, bgr, results_by_color):
         out = bgr.copy()
@@ -246,10 +281,7 @@ class CubeDetector(Node):
                 box = d["box"]
                 cx, cy = d["center"]
                 cv2.drawContours(out, [box], 0, (0, 255, 0), 2)
-                if cx != -1:
-                    #cv2.circle(out, (cx, cy), 4, (0, 0, 255), -1)
-                    cv2.putText(out, color, (cx + 6, cy - 6),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.circle(out, (cx, cy), 4, (0, 255, 0), -1)
         return out
 
 
