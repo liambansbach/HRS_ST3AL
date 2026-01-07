@@ -29,6 +29,8 @@ setup(
         'console_scripts': [
             'camera_sub = vision.camera_sub:main',
             'detect_cubes = vision.detect_cubes:main',
+            'mp_pose = vision.mp_upperbody_pose_node:main',
+            'test = vision.test:main',
         ],
     },
 )
