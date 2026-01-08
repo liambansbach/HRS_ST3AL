@@ -32,6 +32,9 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from geometry_msgs.msg import Point, Vector3
 from pathlib import Path
 
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
+
 class CameraSubscriber(Node):
     def __init__(self):
         super().__init__('camera_subscriber')
@@ -51,11 +54,11 @@ class CameraSubscriber(Node):
         self.camera_width = None
         self.camera_heigth = None
 
-
+        # TF broadcaster
+        self.br = TransformBroadcaster(self)
         # gleich laden:
         #self.reference_img = cv2.imread(str(Path.cwd()) + "/screenshots/tutorial_3/templateImg2.png") 
         self.aruco_video = cv2.VideoCapture(str(Path.cwd()) + "/screenshots/tutorial_3/aruco_marker_video.mp4") 
-
 
         self.cb_group = ReentrantCallbackGroup()
 
@@ -296,7 +299,50 @@ class CameraSubscriber(Node):
         print("3D positions: ", tvecs)
         return np.array(rvecs), np.array(tvecs)
     
-    # publish 3d positions as plane in rviz?
+    def publish_transforms(self, rvecs, tvecs, broadcaster):
+        # Nimm den ersten Marker (falls du mehrere willst, musst du hier erweitern)
+        tvec = tvecs[0][0].astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
+        rvec = rvecs[0][0].astype(float)
+        # === Low-pass Filter auf Translation ===
+        if self.last_tvec is None:
+            tvec_f = tvec
+        else:
+            tvec_f = self.alpha_pos * tvec + (1.0 - self.alpha_pos) * self.last_tvec
+        self.last_tvec = tvec_f
+
+        # === Low-pass Filter auf Rotation (auf rvec) ===
+        if self.last_rvec is None:
+            rvec_f = rvec
+        else:
+            rvec_f = self.alpha_rot * rvec + (1.0 - self.alpha_rot) * self.last_rvec
+        self.last_rvec = rvec_f
+
+        # === Koordinatensystem-Anpassung ===
+        # Dein bisheriger Mapping-Stand (den du „ok“ fandest) war:
+        # x_ros = tz, y_ros = -tx, z_ros = -ty
+        tx, ty, tz = tvecs
+
+        t_msg = TransformStamped()
+        t_msg.header.stamp = self.get_clock().now().to_msg()
+        t_msg.header.frame_id = "camera_link"
+        t_msg.child_frame_id = "aruco_marker"
+
+        t_msg.transform.translation.x = float(tz)    # vor der Kamera
+        t_msg.transform.translation.y = float(-tx)   # links/rechts
+        t_msg.transform.translation.z = float(-ty)   # hoch/runter
+
+        # Rotation aus gefiltertem rvec
+        R_cv, _ = cv2.Rodrigues(rvec_f)
+        r = R.from_matrix(R_cv)
+        qx, qy, qz, qw = r.as_quat()  # [x, y, z, w]
+
+        t_msg.transform.rotation.x = float(qx)
+        t_msg.transform.rotation.y = float(qy)
+        t_msg.transform.rotation.z = float(qz)
+        t_msg.transform.rotation.w = float(qw)
+
+        # TF senden
+        self.br.sendTransform(t_msg)
 
 def main(args=None):
     rclpy.init(args=args)
