@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
 """
 TUM - ICS AiNex CameraSubscriberCompressed Demo for ROS 2 Jazzy
-----------------------------------------
-Subscribes to JPEG-compressed images and raw images on /camera_image/compressed and /camera_image,
-shows frames with OpenCV, and displays CameraInfo.
-
-Requires:
-  sudo apt install python3-numpy python3-opencv
-
-Msgs:
-    sensor_msgs/CompressedImage
-    sensor_msgs/CameraInfo
-
 
 Group B:
     Liam Bansbach
@@ -22,32 +11,24 @@ Group B:
 """
 from typing import Tuple
 import numpy as np
-#import matplotlib.pyplot as plt
 import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from rclpy.callback_groups import ReentrantCallbackGroup
-from geometry_msgs.msg import Point, Vector3
 from pathlib import Path
 
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 
+from scipy.spatial.transform import Rotation as R
+
+
 class CameraSubscriber(Node):
     def __init__(self):
         super().__init__('camera_subscriber')
         self.cwd = Path.cwd()
-        #self.track_window = None
-
-        #self.optical_flow_flag = False
-        # self.reference_img_gray = None      # Referenzbild (grau)
-        # self.reference_pts = None       # Punkte aus dem Referenzbild
-        # self.prev_frame_gray = None     # Vorframe (grau)
-        # self.current_frame_pts = None           # Punkte im aktuellen Frame (Nx1x2)
-        # self.mask = None          # Layer für Trajektorien
-        # self.random_colors = np.random.randint(0,255,(300,3)).tolist()
 
         self.camera_k = None
         self.camera_d = None
@@ -56,9 +37,6 @@ class CameraSubscriber(Node):
 
         # TF broadcaster
         self.br = TransformBroadcaster(self)
-        # gleich laden:
-        #self.reference_img = cv2.imread(str(Path.cwd()) + "/screenshots/tutorial_3/templateImg2.png") 
-        self.aruco_video = cv2.VideoCapture(str(Path.cwd()) + "/screenshots/tutorial_3/aruco_marker_video.mp4") 
 
         self.cb_group = ReentrantCallbackGroup()
 
@@ -95,10 +73,12 @@ class CameraSubscriber(Node):
         self.frame = None # BGR Frame
         self.aruco_frame = None
 
-        # self.image_shown = False
-        # self.normalized_roi_hist = self.read_show_image()   # returns hist now
-        
-
+        self.tvecs = None
+        self.rvecs = None
+        self.last_tvec = None
+        self.last_rvec = None
+        self.alpha_pos = 0.2   # 0.1, smaller = smoother
+        self.alpha_rot = 0.2      
 
     def camera_info_callback(self, msg: CameraInfo):
         if not self.camera_info_received:
@@ -144,27 +124,31 @@ class CameraSubscriber(Node):
     def display_loop(self):
         while rclpy.ok():
             if self.frame is not None:
-                # Display the compressed image 
-                #self.shift_frame = self.frame.copy()
-                #self.optical_flow_frame = self.frame.copy()   
                 self.aruco_frame = self.frame.copy() #aruco detection from ainex cam
-                #ret, self.aruco_frame = self.aruco_video.read()  # aruco detection from tet video
 
-                # TODO comment out the parts that dont need to be displayed.
-                #self.read_show_image()
-                #self.back_projection()
-                #self.apply_meanshift()
-                #self.apply_camshift()
-                #self.optical_flow_step()
+                # comment out the parts that dont need to be displayed.
                 corners, ids, rejected = self.aruco_marker()
-                self.define_boundary_box(corners)
-                self.calculate_3d_positions(corners)
+                if len(corners) == 4:
+                    self.define_boundary_box(corners)
+                    if self.camera_info_received:
+                        #self.rvecs, self.tvecs = 
+                        self.calculate_3d_positions(corners)
+                        #print("rvecs: ", self.rvecs, "tvecs: ", self.tvecs)
+                    if self.tvecs is not None and self.rvecs is not None:
+                        self.publish_transforms()#self.rvecs, self.tvecs, self.br)
+                        # calculate mean of centers of markers
+                        centers_of_centers = self.centers.mean(axis=0)
+                        print("centers_of_centers: ", centers_of_centers)
+                        test = self.check_if_in_workspace((centers_of_centers[0], centers_of_centers[1]))
+                        print("is the point in the workspace? ", test)
+                        test = self.check_if_in_workspace((centers_of_centers[0]+1000, centers_of_centers[1]+1000))
+                        print("is the point in the workspace? ", test)
+
+
 
                 cv2.imshow('Camera Subscrber', self.frame)
                 cv2.imshow('3D marker position', self.aruco_frame)
-                #cv2.imshow('cam/mean shift', self.shift_frame)
-                #cv2.imshow('optical flow: ', self.optical_flow_frame)
-            
+
             # Check for key press
             # maybe remove this, as this could lead to unintended closing of the node?
             if not self.process_key():
@@ -216,12 +200,8 @@ class CameraSubscriber(Node):
             corners, ids, rejected = cv2.aruco.detectMarkers(
                 gray, aruco_dict, parameters=parameters
             )
-        print("ids: ", ids, "corners: ", corners)
-
+        # Draw detected markers
         cv2.aruco.drawDetectedMarkers(self.aruco_frame, corners, ids)
-        #print("ids: ", ids)
-        #print("type of corners: ", type(corners))
-        #print("corners: ", corners)
         return corners, ids, rejected
     
     def calc_centers(self, corners):
@@ -239,17 +219,16 @@ class CameraSubscriber(Node):
             return
 
         # 1) calculate marker centers
-        centers = self.calc_centers(corners)  # (N,2) float32
-
-        # Need at least 3 points for a hull polygon
-        if centers.shape[0] != 4:
-            print("Not enough markers detected to define a boundary.")
-            return
+        self.centers = self.calc_centers(corners)  # (N,2) float32
 
         # 2) convex hull on centers
-        hull = cv2.convexHull(centers)          # (M,1,2) float32
-        hull_i32 = hull.astype(np.int32)        # required for drawing
-    
+        # maybe use cv2.minAreaRect(self.centers) instead?
+        # hull = centers, just in another order (maybe it orders it clockwise?)
+        self.hull = cv2.convexHull(self.centers)          # (M,1,2) float32
+        hull_i32 = self.hull.astype(np.int32)        # required for drawing
+        print("hull_i32: ", hull_i32)
+
+
         # 3) draw (close polygon)
         cv2.polylines(
                 self.aruco_frame,
@@ -260,8 +239,9 @@ class CameraSubscriber(Node):
             )
         
         # Optional: visualize the centers themselves
-        for (x, y) in centers.astype(np.int32):
+        for (x, y) in self.centers.astype(np.int32):
             cv2.circle(self.aruco_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+                
 
     def calculate_3d_positions(self, corners, marker_length=0.05):
         """
@@ -282,7 +262,6 @@ class CameraSubscriber(Node):
         # Prepare lists to hold rotation and translation vectors
         rvecs = []
         tvecs = []
-        #ids_list = []
 
         # Iterate over each detected marker
         for i, corner in enumerate(corners):
@@ -296,13 +275,15 @@ class CameraSubscriber(Node):
             rvecs.append(rvec)
             tvecs.append(tvec)
 
-        print("3D positions: ", tvecs)
-        return np.array(rvecs), np.array(tvecs)
-    
-    def publish_transforms(self, rvecs, tvecs, broadcaster):
+        self.rvecs = np.array(rvecs)
+        self.tvecs = np.array(tvecs)
+    # would require an joint_state update, as robot stands upwards in rviz but not in reality
+
+
+    def publish_transforms(self):#, rvecs, tvecs, broadcaster):
         # Nimm den ersten Marker (falls du mehrere willst, musst du hier erweitern)
-        tvec = tvecs[0][0].astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
-        rvec = rvecs[0][0].astype(float)
+        tvec = self.tvecs.astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
+        rvec = self.rvecs.astype(float)
         # === Low-pass Filter auf Translation ===
         if self.last_tvec is None:
             tvec_f = tvec
@@ -318,31 +299,48 @@ class CameraSubscriber(Node):
         self.last_rvec = rvec_f
 
         # === Koordinatensystem-Anpassung ===
-        # Dein bisheriger Mapping-Stand (den du „ok“ fandest) war:
-        # x_ros = tz, y_ros = -tx, z_ros = -ty
-        tx, ty, tz = tvecs
+        for i in range(tvec_f.shape[0]):
+            tvec_f_i = tvec_f[i].flatten()
+            rvec_f_i = rvec_f[i].flatten()
 
-        t_msg = TransformStamped()
-        t_msg.header.stamp = self.get_clock().now().to_msg()
-        t_msg.header.frame_id = "camera_link"
-        t_msg.child_frame_id = "aruco_marker"
+            tx = tvec_f_i[0]
+            ty = tvec_f_i[1]
+            tz = tvec_f_i[2]
 
-        t_msg.transform.translation.x = float(tz)    # vor der Kamera
-        t_msg.transform.translation.y = float(-tx)   # links/rechts
-        t_msg.transform.translation.z = float(-ty)   # hoch/runter
+            t_msg = TransformStamped()
+            t_msg.header.stamp = self.get_clock().now().to_msg()
+            t_msg.header.frame_id = "camera_link"
+            t_msg.child_frame_id = "aruco_marker_" + str(i)
 
-        # Rotation aus gefiltertem rvec
-        R_cv, _ = cv2.Rodrigues(rvec_f)
-        r = R.from_matrix(R_cv)
-        qx, qy, qz, qw = r.as_quat()  # [x, y, z, w]
+            t_msg.transform.translation.x = float(tz)    # vor der Kamera
+            t_msg.transform.translation.y = float(-tx)   # links/rechts
+            t_msg.transform.translation.z = float(-ty)   # hoch/runter
 
-        t_msg.transform.rotation.x = float(qx)
-        t_msg.transform.rotation.y = float(qy)
-        t_msg.transform.rotation.z = float(qz)
-        t_msg.transform.rotation.w = float(qw)
+            # Rotation aus gefiltertem rvec
+            R_cv, _ = cv2.Rodrigues(rvec_f_i)
+            r = R.from_matrix(R_cv)
+            qx, qy, qz, qw = r.as_quat()  # [x, y, z, w]
 
-        # TF senden
-        self.br.sendTransform(t_msg)
+            t_msg.transform.rotation.x = float(qx)
+            t_msg.transform.rotation.y = float(qy)
+            t_msg.transform.rotation.z = float(qz)
+            t_msg.transform.rotation.w = float(qw)
+
+            # TF senden
+            self.br.sendTransform(t_msg)
+        
+
+    # maybe TODO: bring robot in a specific position (including updateing the joint_state in rviz), then let it search for the markers (move head)
+    
+
+    def check_if_in_workspace(self, point: Tuple[float, float]) -> bool:
+        # cv2.pointPolygonTest expects contour as (N,1,2) or (N,2)
+        contour = self.hull.astype(np.float32)
+
+        # returns: +1 inside, 0 on edge, -1 outside (when measureDist=False)
+        res = cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False)
+        return res >= 0
+            
 
 def main(args=None):
     rclpy.init(args=args)
