@@ -136,13 +136,15 @@ class CameraSubscriber(Node):
                         #print("rvecs: ", self.rvecs, "tvecs: ", self.tvecs)
                     if self.tvecs is not None and self.rvecs is not None:
                         self.publish_transforms()#self.rvecs, self.tvecs, self.br)
+
+                        #here one can test the check_if_in_workspace function:
                         # calculate mean of centers of markers
-                        centers_of_centers = self.centers.mean(axis=0)
-                        print("centers_of_centers: ", centers_of_centers)
-                        test = self.check_if_in_workspace((centers_of_centers[0], centers_of_centers[1]))
-                        print("is the point in the workspace? ", test)
-                        test = self.check_if_in_workspace((centers_of_centers[0]+1000, centers_of_centers[1]+1000))
-                        print("is the point in the workspace? ", test)
+                        # centers_of_centers = self.centers.mean(axis=0)
+                        # print("centers_of_centers: ", centers_of_centers)
+                        # test = self.check_if_in_workspace((centers_of_centers[0], centers_of_centers[1]))
+                        # print("is the point in the workspace? ", test)
+                        # test = self.check_if_in_workspace((centers_of_centers[0]+1000, centers_of_centers[1]+1000))
+                        # print("is the point in the workspace? ", test)
 
 
 
@@ -226,7 +228,7 @@ class CameraSubscriber(Node):
         # hull = centers, just in another order (maybe it orders it clockwise?)
         self.hull = cv2.convexHull(self.centers)          # (M,1,2) float32
         hull_i32 = self.hull.astype(np.int32)        # required for drawing
-        print("hull_i32: ", hull_i32)
+        #print("hull_i32: ", hull_i32)
 
 
         # 3) draw (close polygon)
