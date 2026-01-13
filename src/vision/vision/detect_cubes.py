@@ -16,7 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from rclpy.callback_groups import ReentrantCallbackGroup
-from ainex_interfaces.msg import CubeCenter, CubeCenterList
+from ainex_interfaces.msg import CubeBBox, CubeBBoxList
 
 class CubeDetector(Node):
     def __init__(self):
@@ -28,16 +28,16 @@ class CubeDetector(Node):
         self.bridge = CvBridge()
         self.frame = None
 
-        self.hsv_ranges = {
         """    "R": [((0, 120, 70), (10, 255, 255))],
             "G": [((55, 200, 200), (60, 255, 255))],
             "B": [((90, 200, 200), (128, 255, 255))]
         }"""
+        self.hsv_ranges = {
                         # TODO ggf boundaries tighter
-        "green": [((60, 70, 40), (90, 255, 255))],
-        "blue":  [((95, 60, 40), (125, 255, 255))],
-        "red":   [((0, 70, 40), (10, 255, 255)),
-                ((165, 70, 40), (179, 255, 255))],
+        "green": [((65, 120, 80), (85, 255, 255))],
+        "blue":  [((90, 40, 120), (110, 190, 255))],
+        "red":   [((0, 150, 80), (15, 255, 255)),
+                ((165, 150, 80), (179, 255, 255))],
         }
 
         # Cube center
@@ -69,14 +69,14 @@ class CubeDetector(Node):
             callback_group=self.cb_group,
         )
 
-        self.centers_pub = self.create_publisher(CubeCenterList, '/cube_centers', 10)
+        self.bboxes_pub = self.create_publisher(CubeBBoxList, '/bboxes', 10)
 
     def camera_cb(self, msg: Image):
         # Convert image to OpenCV BGR
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             results, combined = self.detect_all_colors(frame)
-            self.publish_cube_centers(results, msg.header)
+            self.publish_bboxes(results, msg.header)
         except Exception as e:
             self.get_logger().warn(f"Failed to convert image: {e}")
             return
@@ -114,10 +114,17 @@ class CubeDetector(Node):
         TODO
         maybe adapt kernel sizes as like this erosion/dilation is quite strong
         """
-        initial_erosion = cv2.erode(binary_mask, np.ones((3,3), np.uint8), iterations = 2)
+
+        """        initial_erosion = cv2.erode(binary_mask, np.ones((3,3), np.uint8), iterations = 2)
         dilation = cv2.dilate(initial_erosion, np.ones((3,3), np.uint8), iterations = 6)
-        post_erosion = cv2.erode(dilation, np.ones((3,3), np.uint8), iterations = 2)
+        post_erosion = cv2.erode(dilation, np.ones((3,3), np.uint8), iterations = 2)"""
         
+        k1 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
+        clean = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, k1)
+
+        k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
+        post_erosion = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, k2)
+
         # optional: filter very small blobs (noise) by accessing the area from the stats
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(post_erosion, connectivity=8, ltype=cv2.CV_32S)
 
@@ -174,6 +181,7 @@ class CubeDetector(Node):
         (cx, cy), (w, h), angle = rect
         box = cv2.boxPoints(rect)                # 4x2 float
         box = box.astype(np.int32)
+
         return (cx, cy), (w, h), angle, box
 
     """
@@ -212,15 +220,51 @@ class CubeDetector(Node):
 
         return True
 
+    def is_color_consistent(self, hsv, contour):
+        """
+        checks if color distribution within a contour is roughly uniform
+        return: bool
+        """
+
+        is_consistent=True
+        
+        # filled mask for one contour (pixels inside the contour are 255, else 0)
+        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+        # computes mean for pixels that are not zero
+        mean_hsv = cv2.mean(hsv, mask=mask)
+
+        # calc std of pixels
+        inner = cv2.erode(mask, np.ones((5,5), np.uint8), iterations=1)
+        pixels = hsv[inner == 255]
+        h_std = pixels[:,0].std()
+        s_std = pixels[:,1].std()
+        v_std = pixels[:,2].std()
+
+        if h_std > 10:
+            is_consistent = False
+
+        return is_consistent
+
+    '''
+    maybe limit number of detections to 3 since task only requires 3 cubes?
+    '''
     def detect_color(self, bgr, color_name, color_ranges):
         hsv = self.bgr_to_hsv(bgr)
         mask = self.make_color_mask(hsv, color_ranges)
         cleaned = self.extract_blobs(mask)
         contours = self.find_contours(cleaned)
+        
+        """
+        TODO check all contours inner color spectrum if the color values are consistent with neighbours
+        """
 
         dets = []
         for c in contours:
             if not self.is_cube_candidate(c):
+                continue
+            if not self.is_color_consistent(hsv=hsv, contour=c):
                 continue
             center = self.find_contour_center(c)
             bbox_center, (w, h), angle, box = self.bbox(c)
@@ -250,27 +294,32 @@ class CubeDetector(Node):
 
         return results, combined
 
-    def publish_cube_centers(self, results, header):
-        msg = CubeCenterList()
+    def publish_bboxes(self, results, header):
+        msg = CubeBBoxList()
         msg.header = header
 
-        msg.cubes = []
+        msg.bboxes = []
         for color, dets in results.items():
             for det in dets:
                 cx, cy = det["bbox_center"]
+                size = det["size"]
+                angle = det["angle"]
 
-                c = CubeCenter()
-                c.color = color
-                c.x = float(cx)
-                c.y = float(cy)
+                bbox = CubeBBox()
+                bbox.color = color
+                bbox.cx = float(cx)
+                bbox.cy = float(cy)
+                bbox.w = float(size[0])
+                bbox.h = float(size[1])
+                bbox.angle = float(angle)
 
-                msg.cubes.append(c)
+                msg.bboxes.append(bbox)
 
-        self.centers_pub.publish(msg)
+        self.bboxes_pub.publish(msg)
 
         self.get_logger().info(
-            f"\n\nPublishing {len(msg.cubes)} cube centers: " +
-            ", ".join([f'({c.x:.1f},{c.y:.1f})' for c in msg.cubes])
+            f"\n\nPublishing {len(msg.bboxes)} bounding boxes:\n" +
+            "".join([f'center: ({bbox.cx:.1f},{bbox.cy:.1f}), size: ({bbox.w}, {bbox.h}), angle: {bbox.angle}, color: {bbox.color}\n' for bbox in msg.bboxes])
         )
 
 
@@ -305,6 +354,15 @@ class CubeDetector(Node):
 
         cv2.destroyAllWindows()
 
+
+
+"""
+TODO
+
+- add maximum number of bboxes to three and region in frame that is tolerated
+- adapt hsv ranges and maybe contour detection in case cubes are on top of each other
+- implement camshift: first in this node, then maybe split into another
+"""
 def main():
     rclpy.init()
     node = CubeDetector()

@@ -20,6 +20,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/UpperbodyPose.msg"
   "msg/CubeCenter.msg"
   "msg/CubeCenterList.msg"
+  "msg/CubeBBox.msg"
+  "msg/CubeBBoxList.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs visualization_msgs
 )
 
