@@ -1,0 +1,5 @@
+geometry_msgs/Point wrist_target_left
+geometry_msgs/Point wrist_target_right
+
+float32 angle_left_elbow
+float32 angle_right_elbow

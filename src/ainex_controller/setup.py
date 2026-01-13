@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ainex_hands_control_node = ainex_controller.ainex_hands_control_node:main',
+            'human_to_ainex_basis = ainex_controller.human_to_ainex_basis:main',
         ],
     },
 )
