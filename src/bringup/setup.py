@@ -2,7 +2,8 @@ from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'vision'
+
+package_name = 'bringup'
 
 setup(
     name=package_name,
@@ -12,15 +13,12 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', 'vision', 'config'), glob('config/*.yaml')),
-        (os.path.join('share', package_name, 'models'), glob('models/*.task')),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
-    install_requires=[
-        'setuptools',
-        ],
+    install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='hrs2025',
-    maintainer_email='tobias.toews@tum.de',
+    maintainer='marius',
+    maintainer_email='marius.renaa@tum.de',
     description='TODO: Package description',
     license='TODO: License declaration',
     extras_require={
@@ -30,11 +28,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_sub = vision.camera_sub:main',
-            'detect_cubes = vision.detect_cubes:main',
-            'mp_pose = vision.mp_upperbodypose_node:main',
-            'test = vision.test:main',
-            'identify_workspace = vision.identify_workspace:main',
         ],
     },
 )
