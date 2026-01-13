@@ -21,6 +21,8 @@ The **MediaPipe** library does not come packaged with ROS2 and need to be instal
     ```
 
 
+    **WARNING:** It is important that the virtual environment is placed correclty inside "src" and is named ".venv". If not, the launch description will not find it!
+
 2.  **Install MediaPipe:**
     With the virtual environment active, install the required library:
     ```bash
@@ -41,6 +43,8 @@ The **MediaPipe** library does not come packaged with ROS2 and need to be instal
     ```
 
 ## Step 2: Run the launch file
+
+Run the launch file **from the root of the project**:
 
 ```bash
 ros2 launch bringup upper_body_imitation.launch.py
