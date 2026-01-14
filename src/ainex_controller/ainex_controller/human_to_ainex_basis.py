@@ -20,7 +20,7 @@ from ainex_interfaces.msg import UpperbodyPose, RobotImitationTargets
 
 class HumanToAinex(Node):
     def __init__(self):
-        super().__init__('mp_pose')
+        super().__init__('human_to_ainex')
 
         self.bodypose_sub = self.create_subscription(
             UpperbodyPose,
