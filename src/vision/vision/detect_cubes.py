@@ -361,6 +361,8 @@ TODO
 
 - add maximum number of bboxes to three and region in frame that is tolerated
 - adapt hsv ranges and maybe contour detection in case cubes are on top of each other
+        analyse is_color_consisten
+        morpholog in case cubes are on top of each other
 - implement camshift: first in this node, then maybe split into another
 """
 def main():
