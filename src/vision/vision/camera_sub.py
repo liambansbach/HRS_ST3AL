@@ -202,7 +202,6 @@ class CameraSubscriber(Node):
             if self.frame is not None:
                 # Display the compressed image 
                 cv2.imshow('Camera Compressed undistorted', self.undist)
-                input("Press Enter to continue...")
                                     
             if not self.process_key():
                 break

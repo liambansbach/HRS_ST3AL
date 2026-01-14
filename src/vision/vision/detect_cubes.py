@@ -28,6 +28,12 @@ class CubeDetector(Node):
         self.bridge = CvBridge()
         self.frame = None
 
+        self.green_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_green.npy"
+        self.green_hist = np.load(self.green_hist_path)
+
+        self.green_window = None  # (x,y,w,h) axis-aligned tracking window
+        self.term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
+
         """    "R": [((0, 120, 70), (10, 255, 255))],
             "G": [((55, 200, 200), (60, 255, 255))],
             "B": [((90, 200, 200), (128, 255, 255))]
@@ -82,7 +88,6 @@ class CubeDetector(Node):
             return
         
         self.frame = frame
-
 
     """
     TODO
@@ -353,8 +358,6 @@ class CubeDetector(Node):
             rclpy.spin_once(self, timeout_sec=0.01)
 
         cv2.destroyAllWindows()
-
-
 
 """
 TODO
