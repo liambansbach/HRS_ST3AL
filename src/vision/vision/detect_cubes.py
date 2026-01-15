@@ -2,6 +2,8 @@
 
 """
 Docstring for vision.vision.detect_cubes
+
+histogram → global blob → initial window → CamShift tracking → optional optical-flow fine-tune
 """
 
 from pathlib import Path
@@ -31,35 +33,26 @@ class CubeDetector(Node):
         self.green_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_green.npy"
         self.green_hist = np.load(self.green_hist_path)
 
-        self.green_window = None  # (x,y,w,h) axis-aligned tracking window
+        #self.green_window_corners =[212, 295, 260, 350] # x1, x2, y1, y2
+        #self.green_window = (215, 255, 300-215, 350-255)
+
+        self.green_window = None
+        self.red_window = None
+        self.blue_window = None
         self.term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
 
-        """    "R": [((0, 120, 70), (10, 255, 255))],
-            "G": [((55, 200, 200), (60, 255, 255))],
-            "B": [((90, 200, 200), (128, 255, 255))]
-        }"""
-        self.hsv_ranges = {
-                        # TODO ggf boundaries tighter
-        "green": [((65, 120, 80), (85, 255, 255))],
-        "blue":  [((90, 40, 120), (110, 190, 255))],
-        "red":   [((0, 150, 80), (15, 255, 255)),
-                ((165, 150, 80), (179, 255, 255))],
-        }
+        self.flow_pts = None
+        self.flow_prev_gray = None
+        self.flow_mask = None
+        self.flow_min_pts = 25
 
-        # Cube center
-        self.center_coords = []
-        self.colors = []
+        self.feature_params = dict(maxCorners=200, qualityLevel=0.01, minDistance=5, blockSize=7)
 
-        # Noise filters (tune)
-        self.min_area = 800
-        self.max_area = 30000000
-
-        self.min_w = 15
-        self.max_w = 8000000
-        
-        self.min_h = 15
-        self.max_h = 8000000
-
+        self.lk_params = dict(
+            winSize=(21, 21),
+            maxLevel=3,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
+        )
         # QoS: Reliable to ensure camera_info is received
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -75,282 +68,277 @@ class CubeDetector(Node):
             callback_group=self.cb_group,
         )
 
-        self.bboxes_pub = self.create_publisher(CubeBBoxList, '/bboxes', 10)
-
     def camera_cb(self, msg: Image):
         # Convert image to OpenCV BGR
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            results, combined = self.detect_all_colors(frame)
-            self.publish_bboxes(results, msg.header)
+
         except Exception as e:
             self.get_logger().warn(f"Failed to convert image: {e}")
             return
         
         self.frame = frame
 
+
     """
-    TODO
-    - assign colors to cubes based on inner square color
-    - publish cube poses and colors
-    - optional: improve detection (e.g., filter by size, use contours better)
+    ===========================
+            CAMSHIFT 
+    ===========================
     """
 
-    def bgr_to_hsv(self, bgr):
-        return cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    """def load_hist(self, path):
+        return np.load(path)"""
+    
+    def bgr_to_hsv(self, frame):
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    def make_color_mask(self, hsv, color_ranges):
-        """creates a binary mask from hsv; depends on input color_range"""
-        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
-
-        for lower, upper in color_ranges:
-            m = cv2.inRange(
-                hsv,
-                np.array(lower, dtype=np.uint8),
-                np.array(upper, dtype=np.uint8),
-            )
-            mask = cv2.bitwise_or(mask, m)
-        return mask
-
-    def extract_blobs(self, binary_mask):
-        """extracts blobs; receives binary mask depending on input color from make_color_mask()"""
-
+    def back_projection(self, hist):
+        hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        mask_sv = cv2.inRange(hsv, (0, 40, 40), (179, 255, 255))
+        bp = cv2.calcBackProject([h], [0], hist, [0, 180], 1)
+        bp = cv2.GaussianBlur(bp, (7, 7), 0)        # blur reduces jitter
+        bp = cv2.bitwise_and(bp, bp, mask=mask_sv)
+        _, bp = cv2.threshold(bp, 30, 255, cv2.THRESH_TOZERO)  # tune 20–60
+        return bp
+    
+    def find_biggest_blob(self, bp, min_area=300):        # maybe add min_area?
         """
-        TODO
-        maybe adapt kernel sizes as like this erosion/dilation is quite strong
-        """
-
-        """        initial_erosion = cv2.erode(binary_mask, np.ones((3,3), np.uint8), iterations = 2)
-        dilation = cv2.dilate(initial_erosion, np.ones((3,3), np.uint8), iterations = 6)
-        post_erosion = cv2.erode(dilation, np.ones((3,3), np.uint8), iterations = 2)"""
+        Finds biggest blob
         
-        k1 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        clean = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, k1)
-
-        k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
-        post_erosion = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, k2)
-
-        # optional: filter very small blobs (noise) by accessing the area from the stats
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(post_erosion, connectivity=8, ltype=cv2.CV_32S)
-
-        filtered = np.zeros_like(binary_mask, dtype=np.uint8)
-
-        """
-        TODO
-        adapt threshold for area, min_w and min_h
+        :param bp: backprojection depending on color histogram
+        returns: bounding rect of biggest blob
         """
 
-        min_area = self.min_area
-        max_area = self.max_area
+        bw = (bp > 0).astype(np.uint8) * 255 
 
-        min_w = self.min_w
-        max_w = self.max_w
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, k, iterations=1)
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, k, iterations=1)
 
-        min_h = self.min_h
-        max_h = self.max_h
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
 
-        for i in range(1, num_labels):  # 0 is background
-            area = stats[i, cv2.CC_STAT_AREA]
-            w    = stats[i, cv2.CC_STAT_WIDTH]
-            h    = stats[i, cv2.CC_STAT_HEIGHT]
+        c = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(c) < min_area:
+            return None
+        return cv2.boundingRect(c)
 
-            # noise filter
-            if not (min_area <= area <= max_area):
-                continue
-            if w < min_w or h < min_h:
-                continue
-            if w > max_w or h > max_h:
-                continue
-            # keep this blob
-            filtered[labels == i] = 255
 
-        return filtered
 
-    def find_contours(self, binary_mask):
-        """finds contours and filters noise; receives cleaned mask from extract_blob() """
-        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return contours
-
-      
-    def find_contour_center(self, contour):
-        """returns center points of one contour"""
-        M = cv2.moments(contour)
-        if M["m00"] == 0:
-            return (-1, -1)
-        cx = int(M["m10"] / M["m00"])
-        cy = int(M["m01"] / M["m00"])
-        return (cx, cy)
-
-    def bbox(self, contour):
-        rect = cv2.minAreaRect(contour)          # ((cx,cy),(w,h),angle)
-        (cx, cy), (w, h), angle = rect
-        box = cv2.boxPoints(rect)                # 4x2 float
-        box = box.astype(np.int32)
-
-        return (cx, cy), (w, h), angle, box
-
-    """
-    TODO
-    maybe add metrics and is_cube_candidate later for more accuracte shape validation
-    """
-
-    def is_cube_candidate(self, contour) -> bool:
-        area = cv2.contourArea(contour)
-        if area < self.min_area or area > self.max_area:
-            return False
-
-        # Rotated bounding box
-        (_, _), (w, h), _ = cv2.minAreaRect(contour)
-        w, h = float(w), float(h)
-        if w < 1 or h < 1:
-            return False    
-
-        # Kriterien zur besseren shape validation
-        aspect = max(w, h) / min(w, h)           # >= 1
-        rect_area = w * h
-        extent = area / max(rect_area, 1e-6)     # how well it fills its rotated box
-
+    def apply_camshift(self):
+        """
+        applies camshift to detect the cubes and - if possible - improves tracking with optical flow
         
-        hull = cv2.convexHull(contour)
-        hull_area = cv2.contourArea(hull)
-        solidity = area / max(hull_area, 1e-6)
-
+        :param self: Description
+        """
+        vis = self.frame.copy()
+        bp = self.back_projection(hist=self.green_hist)
         
-        if aspect > 1.8:        # too skinny to be a cube face blob
-            return False
-        if extent < 0.55:       # blob does not look rectangular
-            return False
-        if solidity < 0.85:     # too jagged / noisy
+        #self.green_window = self.find_biggest_blob(bp)
+        if self.green_window is None:
+            self.green_window = self.find_biggest_blob(bp)
+            if self.green_window is None:
+                self.get_logger().warn("[green] no blob found to init window")
+                return vis        
+
+        rotated_rect, new_window = cv2.CamShift(bp, self.green_window, self.term_crit)
+
+        self.green_window = new_window
+        x, y, w, h = self.green_window
+
+        prev_area = getattr(self, "_prev_green_area", None)
+        new_area = w * h
+        if prev_area is not None and new_area > prev_area * 1.5:  # tune 1.5–3.0
+            self.get_logger().warn("[green] window exploded -> reset")
+            self.green_window = None
+            self._prev_green_area = None
+            return vis
+        self._prev_green_area = new_area
+
+        #optional
+        H, W = bp.shape[:2]
+        x = max(0, min(x, W-1))
+        y = max(0, min(y, H-1))
+        w = max(1, min(w, W-x))
+        h = max(1, min(h, H-y))
+        self.green_window = (x, y, w, h)
+
+        roi = bp[y:y+h, x:x+w]
+        conf = float(np.mean(roi)) if roi.size else 0.0
+        
+        ###
+        # remember size
+        prev_w = getattr(self, "_prev_w", w)
+        prev_h = getattr(self, "_prev_h", h)
+
+        # CamShift-rotated size ist oft stabiler als axis-aligned w/h
+        (ccx, ccy), (rw, rh), _ = rotated_rect
+        scale = 1.1  # kleiner Puffer um Würfel
+        w_new = max(1.0, rw * scale)
+        h_new = max(1.0, rh * scale)
+
+        # low confidence -> keep size
+        conf_freeze = 11.0  # tune: 10–20 (bei occlusion meist niedriger)
+        if conf < conf_freeze:
+            w_new, h_new = float(prev_w), float(prev_h)
+        else:
+            # limit increase in size per frame
+            # clamp shrink & grow pro frame
+            max_grow = 1.30     # tune
+            max_shrink = 0.85   # tune (0.7–0.9)
+            w_new = min(w_new, prev_w * max_grow)
+            h_new = min(h_new, prev_h * max_grow)
+            w_new = max(w_new, prev_w * max_shrink)
+            h_new = max(h_new, prev_h * max_shrink)
+
+        # smoothing gegen jitter (low pass filter)
+        alpha = 0.2
+        w_s = getattr(self, "_w_smooth", w_new)
+        h_s = getattr(self, "_h_smooth", h_new)
+        w_s = (1 - alpha) * w_s + alpha * w_new
+        h_s = (1 - alpha) * h_s + alpha * h_new
+        self._w_smooth, self._h_smooth = w_s, h_s
+
+        # axis-aligned window neu um CamShift-center bauen
+        w2, h2 = int(w_s), int(h_s)
+        x2 = int(ccx - w2 / 2)
+        y2 = int(ccy - h2 / 2)
+
+        # clamp to image
+        x2 = max(0, min(x2, W - 1))
+        y2 = max(0, min(y2, H - 1))
+        w2 = max(1, min(w2, W - x2))
+        h2 = max(1, min(h2, H - y2))
+
+        self.green_window = (x2, y2, w2, h2)
+        self._prev_w, self._prev_h = w2, h2
+        
+        if conf < 8.0:  # tune
+            self.get_logger().warn(f"[green] LOST conf={conf:.1f} -> reset window")
+            self.green_window = None
+            return vis
+
+        # Check if optical flow works
+        if self.flow_pts is None or self.flow_prev_gray is None:
+            ok = self.init_flow_in_window(self.green_window, bp=bp)
+            if not ok:
+                # flow not available, CamShift continues alone
+                pass
+        else:
+            ok = self.flow_step_update_window()
+            if ok:
+                # convert tracked points -> updated window
+                pts2 = self.flow_pts.reshape(-1, 2).astype(np.float32)
+
+                # check if flow box viel größer als cam shift
+                xC, yC, wC, hC = self.green_window
+                areaC = wC * hC
+
+                xF, yF, wF, hF = cv2.boundingRect(pts2)
+                areaF = wF * hF
+
+                if areaC > 0 and areaF > areaC * 1.6:  # tune 1.3–2.5
+                    self.get_logger().warn("[flow] exploded vs camshift -> reset flow only")
+                    self.flow_pts = None
+                    self.flow_prev_gray = None
+                else:
+                    # größe bleibt, flow bestimmt nur cx cy neu
+                    mx = float(np.mean(pts2[:, 0]))
+                    my = float(np.mean(pts2[:, 1]))
+
+                    x2 = int(mx - wC / 2.0)
+                    y2 = int(my - hC / 2.0)
+
+                    # clamp to image
+                    x2 = max(0, min(x2, W - 1))
+                    y2 = max(0, min(y2, H - 1))
+                    w2 = max(1, min(int(wC), W - x2))
+                    h2 = max(1, min(int(hC), H - y2))
+
+                    self.green_window = (x2, y2, w2, h2)
+
+        pts = cv2.boxPoints(rotated_rect).astype(np.int32)
+        cv2.polylines(vis, [pts], True, (0, 120, 0), 2)
+
+        x, y, w, h = self.green_window
+        cv2.rectangle(vis, (x, y), (x+w, y+h), (0, 80, 0), 2)
+
+        return vis
+    
+    """
+    ===================
+        OPTICAL FLOW
+    ===================
+    """
+
+    def init_flow_in_window(self, window, bp=None):
+        if window is None or self.frame is None:
             return False
 
+        x, y, w, h = window
+        gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+
+        # only features in window
+        mask = np.zeros_like(gray, dtype=np.uint8)
+        mask[y:y+h, x:x+w] = 255 
+
+        # only features in color hist
+        if bp is not None:
+            mask_bp = (bp > 50).astype(np.uint8) * 255
+            mask = cv2.bitwise_and(mask, mask_bp)
+
+        pts = cv2.goodFeaturesToTrack(gray, mask=mask, **self.feature_params)
+        if pts is None or len(pts) < self.flow_min_pts:
+            return False
+
+        self.flow_pts = pts.astype(np.float32)
+        self.flow_prev_gray = gray
+        self.flow_mask = np.zeros_like(self.frame)  # optional, for drawing trails
         return True
-
-    def is_color_consistent(self, hsv, contour):
-        """
-        checks if color distribution within a contour is roughly uniform
-        return: bool
-        """
-
-        is_consistent=True
+    
+    def flow_step_update_window(self):
+        if self.flow_pts is None or self.flow_prev_gray is None or self.frame is None:
+            return False
         
-        # filled mask for one contour (pixels inside the contour are 255, else 0)
-        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
-        cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+        curr_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
-        # computes mean for pixels that are not zero
-        mean_hsv = cv2.mean(hsv, mask=mask)
-
-        # calc std of pixels
-        inner = cv2.erode(mask, np.ones((5,5), np.uint8), iterations=1)
-        pixels = hsv[inner == 255]
-        h_std = pixels[:,0].std()
-        s_std = pixels[:,1].std()
-        v_std = pixels[:,2].std()
-
-        if h_std > 10:
-            is_consistent = False
-
-        return is_consistent
-
-    '''
-    maybe limit number of detections to 3 since task only requires 3 cubes?
-    '''
-    def detect_color(self, bgr, color_name, color_ranges):
-        hsv = self.bgr_to_hsv(bgr)
-        mask = self.make_color_mask(hsv, color_ranges)
-        cleaned = self.extract_blobs(mask)
-        contours = self.find_contours(cleaned)
-        
-        """
-        TODO check all contours inner color spectrum if the color values are consistent with neighbours
-        """
-
-        dets = []
-        for c in contours:
-            if not self.is_cube_candidate(c):
-                continue
-            if not self.is_color_consistent(hsv=hsv, contour=c):
-                continue
-            center = self.find_contour_center(c)
-            bbox_center, (w, h), angle, box = self.bbox(c)
-
-            #vielleicht später relevant
-            dets.append({
-                "color": color_name,
-                "contour": c,
-                "center": center,
-                "box": box,
-                "bbox_center": bbox_center,
-                "size": (w, h),
-                "angle": angle,
-                "metrics": None,
-            })
-
-        return dets, cleaned
-
-    def detect_all_colors(self, bgr):
-        results = {}
-        combined = np.zeros(bgr.shape[:2], dtype=np.uint8)
-
-        for color, ranges in self.hsv_ranges.items():
-            dets, cleaned = self.detect_color(bgr, color, ranges)  
-            results[color] = dets                                   # vllt später relevant
-            combined = cv2.bitwise_or(combined, cleaned)
-
-        return results, combined
-
-    def publish_bboxes(self, results, header):
-        msg = CubeBBoxList()
-        msg.header = header
-
-        msg.bboxes = []
-        for color, dets in results.items():
-            for det in dets:
-                cx, cy = det["bbox_center"]
-                size = det["size"]
-                angle = det["angle"]
-
-                bbox = CubeBBox()
-                bbox.color = color
-                bbox.cx = float(cx)
-                bbox.cy = float(cy)
-                bbox.w = float(size[0])
-                bbox.h = float(size[1])
-                bbox.angle = float(angle)
-
-                msg.bboxes.append(bbox)
-
-        self.bboxes_pub.publish(msg)
-
-        self.get_logger().info(
-            f"\n\nPublishing {len(msg.bboxes)} bounding boxes:\n" +
-            "".join([f'center: ({bbox.cx:.1f},{bbox.cy:.1f}), size: ({bbox.w}, {bbox.h}), angle: {bbox.angle}, color: {bbox.color}\n' for bbox in msg.bboxes])
+        p1, st, err = cv2.calcOpticalFlowPyrLK(
+        self.flow_prev_gray, curr_gray, self.flow_pts, None, **self.lk_params
         )
 
+        # works?
+        if p1 is None or st is None:
+            self.flow_pts = None
+            self.flow_prev_gray = None
+            return False
 
-    def draw_detections(self, bgr, results_by_color):
-        out = bgr.copy()
-        for color, dets in results_by_color.items():
-            for d in dets:
-                box = d["box"]
-                cx, cy = d["center"]
-                cv2.drawContours(out, [box], 0, (0, 255, 0), 2)
-                cv2.circle(out, (cx, cy), 4, (0, 255, 0), -1)
-        return out
+        # only keep successfully tracked points
+        good_new = p1[st == 1]
+        if good_new.shape[0] < self.flow_min_pts:
+            self.flow_pts = None
+            self.flow_prev_gray = None
+            return False
+
+        # update tracker state
+        self.flow_pts = good_new.reshape(-1, 1, 2).astype(np.float32)
+        self.flow_prev_gray = curr_gray
+        return True
 
 
     def display_loop(self):
         """Main loop to display detected cubes."""
         while rclpy.ok():
             if self.frame is not None:
-                frame = self.frame.copy()
+                #frame = self.frame.copy()
 
-                results, blob_mask = self.detect_all_colors(frame)
-                vis = self.draw_detections(frame, results)
+                #vis = self.apply_camshift()        
+                
+                #vis = self.track_step(self.frame)
+                vis = self.apply_camshift()
+                cv2.imshow("camshift", vis)
 
-                cv2.imshow("Camera", frame)
-                cv2.imshow("Blobs", blob_mask)
-                cv2.imshow("Detections", vis)
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or key == ord('q'):
                 break
@@ -359,15 +347,6 @@ class CubeDetector(Node):
 
         cv2.destroyAllWindows()
 
-"""
-TODO
-
-- add maximum number of bboxes to three and region in frame that is tolerated
-- adapt hsv ranges and maybe contour detection in case cubes are on top of each other
-        analyse is_color_consisten
-        morpholog in case cubes are on top of each other
-- implement camshift: first in this node, then maybe split into another
-"""
 def main():
     rclpy.init()
     node = CubeDetector()
