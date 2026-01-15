@@ -11,14 +11,11 @@ from pathlib import Path
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-import yaml
-from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from rclpy.callback_groups import ReentrantCallbackGroup
-from ainex_interfaces.msg import CubeBBox, CubeBBoxList
 
 class CubeDetector(Node):
     def __init__(self):
@@ -30,20 +27,31 @@ class CubeDetector(Node):
         self.bridge = CvBridge()
         self.frame = None
 
+        self.red_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_red.npy"
         self.green_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_green.npy"
-        self.green_hist = np.load(self.green_hist_path)
+        self.blue_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_blue.npy"
 
-        #self.green_window_corners =[212, 295, 260, 350] # x1, x2, y1, y2
-        #self.green_window = (215, 255, 300-215, 350-255)
+        self.red_hist = np.load(self.red_hist_path)
+        self.green_hist = np.load(self.green_hist_path)
+        self.blue_hist = np.load(self.blue_hist_path)
 
         self.green_window = None
         self.red_window = None
         self.blue_window = None
+
+        self.trackers = {
+            "green": {"hist": np.load(self.green_hist_path), "window": None,
+                    "prev_area": None, "flow_pts": None, "flow_prev_gray": None},
+            "red":   {"hist": np.load(self.red_hist_path),   "window": None,
+                    "prev_area": None, "flow_pts": None, "flow_prev_gray": None},
+            "blue":  {"hist": np.load(self.blue_hist_path),  "window": None,
+                    "prev_area": None, "flow_pts": None, "flow_prev_gray": None},
+        }
+
         self.term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
 
         self.flow_pts = None
         self.flow_prev_gray = None
-        self.flow_mask = None
         self.flow_min_pts = 25
 
         self.feature_params = dict(maxCorners=200, qualityLevel=0.01, minDistance=5, blockSize=7)
@@ -85,12 +93,6 @@ class CubeDetector(Node):
             CAMSHIFT 
     ===========================
     """
-
-    """def load_hist(self, path):
-        return np.load(path)"""
-    
-    def bgr_to_hsv(self, frame):
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     def back_projection(self, hist):
         hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
@@ -295,7 +297,6 @@ class CubeDetector(Node):
 
         self.flow_pts = pts.astype(np.float32)
         self.flow_prev_gray = gray
-        self.flow_mask = np.zeros_like(self.frame)  # optional, for drawing trails
         return True
     
     def flow_step_update_window(self):
@@ -331,11 +332,9 @@ class CubeDetector(Node):
         """Main loop to display detected cubes."""
         while rclpy.ok():
             if self.frame is not None:
-                #frame = self.frame.copy()
-
-                #vis = self.apply_camshift()        
-                
-                #vis = self.track_step(self.frame)
+                vis = self.frame.copy()
+                """for color in ("red", "green", "blue"):
+                    vis = self.track_one(color, vis)"""
                 vis = self.apply_camshift()
                 cv2.imshow("camshift", vis)
 

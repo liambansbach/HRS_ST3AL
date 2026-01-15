@@ -10,8 +10,18 @@ rois = {
     [128, 37],
     [128, 138],
     [56, 138]),
-    "red": (),
-    "blue": ()
+    "red": (
+     [212, 40],   
+     [275, 40],   
+     [275, 130],   
+     [212, 130],   
+    ),
+    "blue": (
+     [350, 35],   
+     [410, 35],   
+     [410, 130],   
+     [350, 130],
+    )   
 }
 
 """roi_green=np.array([
@@ -87,9 +97,11 @@ def comput_hist(roi_dict, img, save=False):
 def main():
     path ="/home/maalonjochmann/HRS_ST3AL/imgs/hsv_reference.jpg"
     img = load_img(path)
-    #show_img(img)
+    show_img(img)
 
     #show_cropped_polygon_roi(img=img, roi_pts=rois["green"])
+    show_cropped_polygon_roi(img=img, roi_pts=rois["blue"])
+    show_cropped_polygon_roi(img=img, roi_pts=rois["red"])
     comput_hist(rois, img, save=True)
 
 if __name__ == "__main__":
