@@ -1,3 +1,5 @@
+import pinocchio as pin
+#import pinocchio.casadi as cpin
 import casadi as ca
 import numpy as np
 
@@ -17,6 +19,10 @@ class NMPC:
             theta_min = np.array([-np.pi/2, -np.pi/2, -np.pi/2, -np.pi/2]),
             theta_max = np.array([np.pi/2, np.pi/2, np.pi/2, np.pi/2]),
             
+            urdf_model = None,
+            arm_joint_ids = None,
+            end_effector_name = None,
+
             homogeneous_transform_params = {
                 'T_0_1':     ([0,0,0], '-y'),
                 'T_1_2':     ([0.02000, -0.02151, 0], 'x'),
@@ -30,7 +36,9 @@ class NMPC:
                 'qpsol_options': {'printLevel': 'none'},
                 'print_time': False,
                 'print_header': False,
-                'print_status': False
+                'print_status': False,
+                'print_iteration': False,
+                'error_on_fail': False,
             }
 
         ) -> None:
@@ -58,21 +66,62 @@ class NMPC:
         self.T_3_4_params     = homogeneous_transform_params['T_3_4']
         self.T_4_wrist_params = homogeneous_transform_params['T_4_wrist']
 
-        self.define_forward_kinemtics()
-        self.nmpc_formulation()
+        self._define_forward_kinemtics_manually()
+
+        """ if urdf_model == None:
+            self._define_forward_kinemtics_manually()
+        else:
+            self._define_forward_kinematics_from_urdf(
+                urdf_model,
+                arm_joint_ids,
+                end_effector_name,            
+            ) """
+
+        self._nmpc_formulation()
 
         self.opti.solver('sqpmethod', solver_options)
 
         self.prev_Theta = None
         self.prev_U = None
 
-    def define_forward_kinemtics(self):
+    """ def _define_forward_kinematics_from_urdf(self, urdf_model, arm_joint_ids, end_effector_name):
+        
+        #Forward kinematics from URDF using Pinocchio with Casadi.
+        
+        cmodel = cpin.Model(urdf_model) # Create a CasADi-compatible model
+        cdata = cmodel.createData()
+
+        theta = ca.SX.sym('theta', self.n_joints)
+        
+        q_full = ca.SX.zeros(urdf_model.nq)
+        
+        # Map the optimized variables 'theta' into the full robot configuration vector
+        for i, idx_q in enumerate(arm_joint_ids):
+            q_full[idx_q] = theta[i]
+
+        cpin.forwardKinematics(cmodel, cdata, q_full) # Compute symbolic Forward Kinematics
+        cpin.updateFramePlacements(cmodel, cdata)
+
+        if urdf_model.existFrame(end_effector_name):
+            ee_frame_id = urdf_model.getFrameId(end_effector_name) # Get the Frame ID of the end effector
+        else:
+            raise ValueError(f"Frame {end_effector_name} does not exist.")
+
+        p_wrist = cdata.oMf[ee_frame_id].translation # Extract the position of the end effector
+
+        self.forward_kinematics_wrist = ca.Function('forward_kinematics_wrist', [theta], [p_wrist]) """
+
+    def _define_forward_kinemtics_manually(self):
+        """
+        Forward kinematics from provided homodeneous transformation matrices.
+        """
+
         # We define the chain relative to the shoulder.
         # Shoulder Pitch -> Shoulder Roll -> Elbow Pitch -> Elbow Yaw -> Wrist
         # The return function is a symbolic vector function, finding the origin of wrist relative to the shoulder
         # Input [theta] -> Output [x_wrist, y_wrist]
 
-        def get_homogeneous_transform(xyz, axis, angle):
+        def _get_homogeneous_transform(xyz, axis, angle):
             
             # Translation between joints
             T = ca.SX.eye(4)
@@ -96,19 +145,19 @@ class NMPC:
 
         theta = ca.SX.sym('theta', self.n_joints)
         # 1. Shoulder Pitch, base of the chain
-        T_0_1 = get_homogeneous_transform(self.T_0_1_params[0], self.T_0_1_params[1], theta[0])
+        T_0_1 = _get_homogeneous_transform(self.T_0_1_params[0], self.T_0_1_params[1], theta[0])
 
         # 2. Shoulder Pitch -> Shoulder Roll 
-        T_1_2 = get_homogeneous_transform(self.T_1_2_params[0], self.T_1_2_params[1], theta[1])
+        T_1_2 = _get_homogeneous_transform(self.T_1_2_params[0], self.T_1_2_params[1], theta[1])
 
         # 3. Shoulder Roll -> Elbow Pitch
-        T_2_3 = get_homogeneous_transform(self.T_2_3_params[0], self.T_2_3_params[1], theta[2])
+        T_2_3 = _get_homogeneous_transform(self.T_2_3_params[0], self.T_2_3_params[1], theta[2])
 
         # 4. Elbow Pitch -> Elbow Yaw
-        T_3_4 = get_homogeneous_transform(self.T_3_4_params[0], self.T_3_4_params[1], theta[3])
+        T_3_4 = _get_homogeneous_transform(self.T_3_4_params[0], self.T_3_4_params[1], theta[3])
 
         # 5. Elbow Yaw -> Wrist (Only translations)
-        T_4_wrist = get_homogeneous_transform(self.T_4_wrist_params[0], self.T_4_wrist_params[1], 0)    
+        T_4_wrist = _get_homogeneous_transform(self.T_4_wrist_params[0], self.T_4_wrist_params[1], 0)    
 
         # Total Chain: Shoulder -> Wrist
         T_shoulder_wrist = ca.mtimes([T_0_1, T_1_2, T_2_3, T_3_4, T_4_wrist])
@@ -118,7 +167,7 @@ class NMPC:
 
         self.forward_kinematics_wrist = ca.Function('forward_kinematics_wrist', [theta], [p_wrist])
 
-    def nmpc_formulation(self):
+    def _nmpc_formulation(self):
         self.opti = ca.Opti() # Casadi's Non-linear problem solver
 
         """ Decision Variables """
@@ -194,9 +243,14 @@ class NMPC:
             self.prev_Theta = sol.value(self.Theta)
             self.prev_U     = sol.value(self.U)
             
-            u_opt = sol.value(self.U[:, 0])
+            theta_optimal = sol.value(self.Theta[:, 1])
+            u_optimal = sol.value(self.U[:, 0])
 
-            return u_opt
+            return {'theta': theta_optimal, 'theta_dot': u_optimal}
                     
         except Exception as e:
             print(f"Failed to solve NMPC problem: {e}")
+            return {
+                'theta': current_Theta, 
+                'theta_dot': np.zeros(self.n_joints)
+            }

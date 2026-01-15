@@ -47,8 +47,17 @@ def generate_launch_description():
         parameters=[{}],
     )
 
+    ainex_imitation_control_node = Node(
+        package='ainex_controller',
+        executable='ainex_imitation_control_node',
+        output='screen',
+        parameters=[{}],
+        additional_env={'PYTHONPATH': new_python_path}
+    )
+
     return LaunchDescription([
         camera_sub,           
         mp_pose,     
         human_to_ainex_basis,
+        ainex_imitation_control_node,
     ])

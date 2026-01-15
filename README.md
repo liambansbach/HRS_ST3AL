@@ -21,12 +21,12 @@ The **MediaPipe** library does not come packaged with ROS2 and need to be instal
     ```
 
 
-    **WARNING:** It is important that the virtual environment is placed correclty inside "src" and is named ".venv". If not, the launch description will not find it!
+    **WARNING:** It is important that the virtual environment is placed correctly inside "src" and is named ".venv". If not, the launch description will not find it!
 
 2.  **Install MediaPipe:**
-    With the virtual environment active, install the required library:
+    With the virtual environment active, install the required libraries:
     ```bash
-    pip install mediapipe
+    pip install mediapipe pin casadi
     ```
 
 3.  **Build the Workspace:**

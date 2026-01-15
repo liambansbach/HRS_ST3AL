@@ -17,7 +17,6 @@ from rclpy.node import Node
 from geometry_msgs.msg import Point
 from ainex_interfaces.msg import UpperbodyPose, RobotImitationTargets
 
-
 class HumanToAinex(Node):
     def __init__(self):
         super().__init__('human_to_ainex')
@@ -35,7 +34,7 @@ class HumanToAinex(Node):
             10
         )
 
-        self.robot_full_reach_length = 10 # NOTE: FIND REAL VALUE !!!
+        self.robot_full_reach_length = 0.02+0.02+0.1702+0.019 # NOTE: FIND REAL VALUE !!!
 
         self.get_logger().info('Human to Robot basis tranformation node started! Listening to "/mp_pose/upper_body_rig"')
 
