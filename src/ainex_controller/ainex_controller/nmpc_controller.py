@@ -10,7 +10,7 @@ class NMPC:
             N = 20,
             
             n_joints = 4,
-            n_task_coords = 2,
+            n_ref_vals = 3,
             
             Q_diag = [100.0, 100.0, 10.0],
             R_diag = [0.1, 0.1, 0.1, 0.1],
@@ -49,7 +49,7 @@ class NMPC:
         self.dt = T_HORIZON_s / N           # Time step (delta t)
 
         self.n_joints = n_joints            # 0: Shoulder Pitch, 1: Shoulder Roll, 2: Elbow Pitch, 3: Elbow Yaw
-        self.n_task_coords = n_task_coords  # 0: x, 1: y
+        self.n_ref_vals = n_ref_vals  # 0: x, 1: y
 
         # Weight Matrices for tuning optimization
         self.Q_diag = Q_diag                #[x, y, theta_elbow]
@@ -176,7 +176,7 @@ class NMPC:
 
         """ Parameters """
         self.Theta_0 = self.opti.parameter(self.n_joints)        # Initial Joint Configuration
-        self.s_ref = self.opti.parameter(3)                      # Reference Trajectory for States s = [x, y, theta_elbow]
+        self.s_ref = self.opti.parameter(self.n_ref_vals)     # Reference Trajectory for States s = [x, y, theta_elbow]
 
         """ Objective Function """
         cost = 0

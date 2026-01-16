@@ -10,6 +10,37 @@ from ainex_controller.nmpc_controller import NMPC
 
 from ainex_interfaces.msg import RobotImitationTargets
 
+""" 
+    Main control node for performing Upperbody Imitation on the Ainex Humanoid Robot.
+    The ImitationControlNode aims to:
+        - Subscribe to a stream publishing upperbody pose estimation of a human, made through the Ainex's camera
+        - Utilize a "non-linear model predictive controller" (NMPC, defined in a separate module) to perform:
+            + Wrist imitation of the human in x and y coordinates (primary target -> to the highest degree)
+            + Optimization over the null-space and do elbow imitation (secondary target -> best as possible)
+
+    The node completes its goals by:
+        1. Using the (x,y) coordinates of the wrist and the angle of the elbow, provided through the subscription,
+            as tracking reference for the NMPC.
+        2. Solving a sequential quadratic program, optimizing over the forward kinematics and a set of constraints
+            to find the optimal inverse kinematic solution over N steps in a time horizon, 
+            giving the joint positions and velocities necessary to reach the reference as output.
+        3. Using the second (next step) joint position as input to the Ainex.
+
+    Node parameters:
+        T_HORIZON_s: Time horizon in second which the nmpc should optimize over (default: 1s)
+        N: Number of steps for perform in the time horizon (default: 20)
+        n_joints: Number of joints in the robot arm (default: 4)
+        n_ref_vals: Number of reference values to optimize over [x_wrist, y_wrist, theta_elbow] (default: 3) 
+        Q_diag: Optimization weights for reference error [x_wrist, y_wrist, theta_elbow] (default: [100, 100, 10]) 
+        R_diag: Optimization weights for forward kinematic input [sho_pitch_dot, sho_roll_dot, el_pitch_dot, el_yaw_dot] (default: [0.1, 0.1, 0.1, 0.1])
+        theta_dot_max: Maximum speed allowed for a joint (default: 2rad/s)        
+        theta_min_left: Minimum angles allowed in left arm (default: [-pi, -pi, -pi, -pi])
+        theta_max_left: Maximum angles allowed in left arm (default: [pi, pi, pi, pi])
+        theta_min_right: Minimum angles allowed in right arm (default: [-pi, -pi, -pi, -pi])
+        theta_max_right: Maximum angles allowed in right arm (default: [pi, pi, pi, pi])
+
+"""
+
 class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
@@ -17,7 +48,7 @@ class ImitationControlNode(Node):
         self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value
         self.N = self.declare_parameter('N', 20).value
         self.n_joints = self.declare_parameter('n_joints', 4).value
-        self.n_task_coords = self.declare_parameter('n_task_coords', 2).value
+        self.n_ref_vals = self.declare_parameter('n_ref_vals', 3).value
         self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 10]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
@@ -55,7 +86,7 @@ class ImitationControlNode(Node):
             self.T_HORIZON_s,
             self.N,
             self.n_joints,
-            self.n_task_coords,
+            self.n_ref_vals,
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
@@ -71,7 +102,7 @@ class ImitationControlNode(Node):
             self.T_HORIZON_s,
             self.N,
             self.n_joints,
-            self.n_task_coords,
+            self.n_ref_vals,
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
