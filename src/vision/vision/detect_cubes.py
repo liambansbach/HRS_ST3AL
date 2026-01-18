@@ -40,16 +40,13 @@ class CubeDetector(Node):
     Node that tracks colored cubes using CamShift + optical flow.
 
     Subscribes
-    ----------
     - camera_image/undistorted (sensor_msgs/Image): BGR8 image stream.
 
     Publishes
-    ---------
     - cubes_position (src/ainex_interfaces/msg/CubeBBoxList.msg): 
-    list of CubeBBox messages (id, cx, cy, w, h), one per color.
+    list of CubeBBox messages (id, cx, cy, w, h, angle), one per color.
 
     Notes
-    -----
     - For each color we keep a small tracker state dict in `self.trackers`.
     - `window` is the *current* tracked (x,y,w,h), where (x,y) is the top left corner of the window.
     - `last_window` is the last known valid window (used if tracking fails in a frame).
