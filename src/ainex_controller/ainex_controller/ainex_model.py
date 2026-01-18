@@ -2,6 +2,7 @@ import pinocchio as pin
 import numpy as np
 from rclpy.node import Node
 from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 
 class AiNexModel:
     """AiNex Robot Model using Pinocchio"""
@@ -38,13 +39,6 @@ class AiNexModel:
         self.x_left = pin.SE3.Identity()
         self.x_right = pin.SE3.Identity()
 
-        self.v_left = pin.Motion.Zero()
-        self.v_right = pin.Motion.Zero()
-
-        # Initialize Jacobians for left and right hands
-        self.J_left = np.zeros((6, self.model.nv))
-        self.J_right = np.zeros((6, self.model.nv))
-
         # Store joint names in Pinocchio order
         self.joint_names = list(self.model.names[1:])
         print("Node names in Pinocchio model:", self.joint_names)
@@ -58,23 +52,39 @@ class AiNexModel:
         pin.forwardKinematics(self.model, self.data, self.q, self.v)
         pin.updateFramePlacements(self.model, self.data)
 
-        # TODO: retrieve end-effector poses from updated pinocchio data
-        # Hint: take a look at the init function for hand ids
-        self.x_left = pin.SE3.Identity()
-        self.x_right = pin.SE3.Identity()
+        self.x_left = self.data.oMf[self.left_hand_id].copy() # ref docu: Vector of absolute operationnel frame placements (wrt the world). 
+        self.x_right = self.data.oMf[self.right_hand_id].copy() # Essentially this is the end-effector frame placement with respect to the base-link (com?)
 
-        # TODO: get end-effector Jacobians in pin.LOCAL_WORLD_ALIGNED frame
-        self.J_left = np.zeros((6, self.model.nv))
-        self.J_right = np.zeros((6, self.model.nv))
+        self.broadcast_tf("left") # Broadcaster for left hand
+        self.broadcast_tf("right") # Broadcaster for right hand
 
-        # TODO: calculate end-effector velocities using the Jacobians
-        # Hint: v_cartesian = J * v_joint
-        self.v_left = np.zeros(6)
-        self.v_right = np.zeros(6)
+    def broadcast_tf(self, hand: str):
+        t = TransformStamped()
+        t.header.stamp = self.node.get_clock().now().to_msg()
+        t.child_frame_id = hand
 
-        # TODO: broadcast tf transformation of hand links w.r.t. base_link for visualization in RViz
-        # Hint: take a look at the tf2_ros documentation for examples
-        # https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Broadcaster-Py.html
+        match hand:
+            case "left":
+                chosen_hand = self.x_left
+                t.header.frame_id = "l_sho_pitch"
+            case "right":
+                chosen_hand = self.x_right
+                t.header.frame_id = "r_sho_pitch"
+            case _:
+                print("The robot only have two hands, left or right...") 
+                return 
+
+        t.transform.translation.x = chosen_hand.translation[0]
+        t.transform.translation.y = chosen_hand.translation[1]
+        t.transform.translation.z = chosen_hand.translation[2]
+
+        q = pin.Quaternion(chosen_hand.rotation)
+        t.transform.rotation.x = q.x
+        t.transform.rotation.y = q.y
+        t.transform.rotation.z = q.z
+        t.transform.rotation.w = q.w
+
+        self.br.sendTransform(t)
 
     def add_additional_frames(self, name, parent_frame, translation, rotation):
         # parent_frame: a frame name in the existing model (string)
@@ -101,15 +111,7 @@ class AiNexModel:
     def right_hand_pose(self):
         """Return the right hand pose in base_link frame."""
         return self.x_right
-    
-    def left_hand_velocity(self):
-        """Return the left hand velocity in base_link frame."""
-        return self.v_left
-    
-    def right_hand_velocity(self):
-        """Return the right hand velocity in base_link frame."""
-        return self.v_right
-    
+        
     def pin_joint_names(self):
         """Return the joint names in Pinocchio model order."""
         return self.joint_names
@@ -144,4 +146,3 @@ class AiNexModel:
         jid = self.model.getJointId(joint_name)
         q_idx = self.model.joints[jid].idx_q
         return q_idx
-    

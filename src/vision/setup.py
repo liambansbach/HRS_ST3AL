@@ -13,8 +13,11 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', 'vision', 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'models'), glob('models/*.task')),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        ],
     zip_safe=True,
     maintainer='hrs2025',
     maintainer_email='tobias.toews@tum.de',
@@ -29,8 +32,9 @@ setup(
         'console_scripts': [
             'camera_sub = vision.camera_sub:main',
             'detect_cubes = vision.detect_cubes:main',
-            'mp_pose = vision.mp_upperbody_pose_node:main',
+            'mp_pose = vision.mp_upperbodypose_node:main',
             'test = vision.test:main',
+            'identify_workspace = vision.identify_workspace:main',
         ],
     },
 )

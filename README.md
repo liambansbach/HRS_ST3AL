@@ -1,1 +1,51 @@
 # HRS_ST3AL
+
+## Running the upper body imitation pipeline
+
+This tutorial guides you through the necessary setup in order to run the upper body imitation on the Ainex Robot.
+
+### Prerequisites
+
+Before starting this tutorial, ensure you have a working ROS2 environment installed.
+
+## Step 1: Environment Setup and Build
+
+The **MediaPipe** library does not come packaged with ROS2 and need to be installed separately (preferably in a virtual environment). In this step, we will set up a virtual environment, install dependencies, and build the ROS2 workspace.
+
+1.  **Create and Activate Virtual Environment:**
+    Navigate to your workspace `src` folder and create the environment:
+    ```bash
+    cd src
+    python3 -m venv .venv --system-site-packages --symlinks
+    source .venv/bin/activate
+    ```
+
+
+    **WARNING:** It is important that the virtual environment is placed correctly inside "src" and is named ".venv". If not, the launch description will not find it!
+
+2.  **Install MediaPipe:**
+    With the virtual environment active, install the required libraries:
+    ```bash
+    pip install mediapipe pin casadi
+    ```
+
+3.  **Build the Workspace:**
+    Return to the root of your workspace and build the packages:
+    ```bash
+    cd ..
+    colcon build
+    ```
+
+4.  **Source the Setup Script:**
+    Overlay the workspace environment:
+    ```bash
+    source install/setup.bash
+    ```
+
+## Step 2: Run the launch file
+
+Run the launch file **from the root of the project**:
+
+```bash
+ros2 launch bringup upper_body_imitation.launch.py
+```

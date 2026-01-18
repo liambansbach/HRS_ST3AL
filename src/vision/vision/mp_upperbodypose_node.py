@@ -3,20 +3,23 @@
 Docstring for camera.camera.mp_pose
 '''
 
+import os
 from pathlib import Path
 import time
+
 import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from cv_bridge import CvBridge
-from sensor_msgs.msg import Image
+from ament_index_python.packages import get_package_share_directory
 
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from sensor_msgs.msg import Image
 from geometry_msgs.msg import Point
 from ainex_interfaces.msg import UpperbodyPose
 
@@ -62,8 +65,11 @@ class MPPose(Node):
         ]
 
         # Path to Landmark model
-        project_root = Path(__file__).resolve().parents[3]
-        model_path = project_root / "models" / "pose_landmarker_lite.task"
+        """ project_root = Path(__file__).resolve().parents[3]
+        model_path = project_root / "models" / "pose_landmarker_lite.task" """
+
+        package_share_directory = get_package_share_directory('vision')
+        model_path = Path(os.path.join(package_share_directory, 'models', 'pose_landmarker_lite.task'))
 
         base_options = python.BaseOptions(model_asset_path=str(model_path))
         options = vision.PoseLandmarkerOptions(

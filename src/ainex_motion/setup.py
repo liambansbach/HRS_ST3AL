@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'ainex_controller'
+package_name = 'ainex_motion'
 
 setup(
     name=package_name,
@@ -11,22 +11,21 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
+    #py_modules=[
+    #    'greeting_node',
+    #    'joint_controller',
+    #],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='wenlan',
+    maintainer='swl',
     maintainer_email='wenlan.shen@tum.de',
     description='TODO: Package description',
-    license='Apache-2.0',
-    extras_require={
-        'test': [
-            'pytest',
-        ],
-    },
+    license='TODO: License declaration',
+    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'ainex_hands_control_node = ainex_controller.ainex_hands_control_node:main',
-            'human_to_ainex_basis = ainex_controller.human_to_ainex_basis:main',
-            'ainex_imitation_control_node = ainex_controller.ainex_imitation_control_node:main',
+            'joint_controller = ainex_motion.joint_controller:main',
+            'joint_visualizer = ainex_motion.joint_visualization_node:main',
         ],
     },
 )
