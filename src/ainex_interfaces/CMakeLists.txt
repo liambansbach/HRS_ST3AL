@@ -18,6 +18,10 @@ find_package(visualization_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/UpperbodyPose.msg"
+  "msg/CubeCenter.msg"
+  "msg/CubeCenterList.msg"
+  "msg/CubeBBox.msg"
+  "msg/CubeBBoxList.msg"
   "msg/RobotImitationTargets.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs visualization_msgs
 )
