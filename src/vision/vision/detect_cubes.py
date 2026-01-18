@@ -407,7 +407,7 @@ class CubeDetector(Node):
         cv2.polylines(vis, [pts], True, c_camshift, 2)      # rotated camshift box
 
         x, y, w, h = window
-        cv2.rectangle(vis, (x, y), (x + w, y + h), c_of, 2)     # axis aligned box
+        #cv2.rectangle(vis, (x, y), (x + w, y + h), c_of, 2)     # axis aligned box
 
         # Save tracker state
         color_dict["window"] = window
