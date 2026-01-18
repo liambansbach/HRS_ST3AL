@@ -76,21 +76,21 @@ class CubeDetector(Node):
                 "hist": np.load(self.red_hist_path),   "window": None, "prev_area": None,
                 "prev_w": None, "prev_h": None, "w_smooth": None, "h_smooth": None,
                 "flow_pts": None, "flow_prev_gray": None,
-                "last_window": None, "tracked": False,
+                "last_window": None, "tracked": False, "rotated_rect": None, "last_rotated_rect": None,
                 },
 
             "green": {
                 "hist": np.load(self.green_hist_path), "window": None, "prev_area": None,
                 "prev_w": None, "prev_h": None, "w_smooth": None, "h_smooth": None,
                 "flow_pts": None, "flow_prev_gray": None,
-                "last_window": None, "tracked": False,
+                "last_window": None, "tracked": False, "rotated_rect": None, "last_rotated_rect": None,
             },
             
             "blue":  {
                 "hist": np.load(self.blue_hist_path),  "window": None, "prev_area": None,
                 "prev_w": None, "prev_h": None, "w_smooth": None, "h_smooth": None,
                 "flow_pts": None, "flow_prev_gray": None,
-                "last_window": None, "tracked": False,
+                "last_window": None, "tracked": False, "rotated_rect": None, "last_rotated_rect": None,
             }
         }
 
@@ -167,21 +167,19 @@ class CubeDetector(Node):
         msg.cubes = []
 
         for color, t in self.trackers.items():
-            win = t["window"] if t["tracked"] else t["last_window"]
-            if win is None:
+            rr = t["rotated_rect"] if t["tracked"] else t["last_rotated_rect"] # camshift output 
+            if rr is None:
                 continue
-            
-            # publishing center coordinates
-            x, y, w, h = win
-            cx = float(x + w / 2)
-            cy = float(y + h / 2)
+
+            (cx, cy), (w, h), angle = rr
 
             b = CubeBBox()
             b.id = color
-            b.cx = cx
-            b.cy = cy
-            b.w = float(w)
-            b.h = float(h)
+            b.cx = float(cx)
+            b.cy = float(cy)
+            b.w  = float(w)
+            b.h  = float(h)
+            b.angle = float(angle)
 
             msg.cubes.append(b)
 
@@ -416,7 +414,11 @@ class CubeDetector(Node):
 
         # Save tracker state
         color_dict["window"] = window
-        color_dict["last_window"] = window     # keep last known position
+        color_dict["last_window"] = window      # keep last known position
+
+        color_dict["rotated_rect"] = rotated_rect
+        color_dict["last_rotated_rect"] = rotated_rect  # keep last known position
+
         color_dict["tracked"] = True
         return vis
     
@@ -512,6 +514,7 @@ class CubeDetector(Node):
         # current tracking state
         t["window"] = None
         t["tracked"] = False
+        t["rotated_rect"] = None
 
         # smoothing
         t["prev_area"] = None   
