@@ -113,3 +113,11 @@ class AinexRobot():
 
         return q_real
    
+    def publish_joint_states(self):
+        """Publish current joint states."""
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
+        joint_state_msg.name = self.joint_names
+        joint_state_msg.position = self.q.tolist()
+        joint_state_msg.velocity = self.v.tolist()
+        self.joint_states_pub.publish(joint_state_msg)

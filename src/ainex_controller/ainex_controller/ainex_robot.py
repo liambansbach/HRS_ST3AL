@@ -32,7 +32,7 @@ class AinexRobot():
 
         self.joint_states_pub = self.node.create_publisher(JointState, 'ainex_joint_states', 10)
         # publish initial joint states
-        self.publish_joint_states()
+        self.publish_jont_states()
 
         self.left_arm_ids = self.robot_model.get_arm_ids("left")
         self.right_arm_ids = self.robot_model.get_arm_ids("right")

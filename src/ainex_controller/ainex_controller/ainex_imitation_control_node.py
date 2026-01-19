@@ -46,18 +46,16 @@ class ImitationControlNode(Node):
         super().__init__('imitation_control_node')
 
         self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value
-        self.N = self.declare_parameter('N', 20).value
+        self.N = self.declare_parameter('N', 10).value
         self.n_joints = self.declare_parameter('n_joints', 4).value
-        self.n_ref_vals = self.declare_parameter('n_ref_vals', 3).value
-        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 10]).value
+        self.n_ref_vals = self.declare_parameter('n_ref_vals', 4).value
+        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 10]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
         
-        self.theta_min_left = self.declare_parameter('theta_min_left', [-np.pi, -np.pi, -np.pi, -np.pi]).value
-        self.theta_max_left = self.declare_parameter('theta_max_left', [np.pi, np.pi, np.pi, np.pi]).value
-        self.theta_min_right = self.declare_parameter('theta_min_right', [-np.pi, -np.pi, -np.pi, -np.pi]).value
-        self.theta_max_right = self.declare_parameter('theta_max_right', [np.pi, np.pi, np.pi, np.pi]).value
-        
+        self.theta_min = self.declare_parameter('theta_min', [-np.pi, -np.pi/2, -np.pi, -1.9]).value
+        self.theta_max = self.declare_parameter('theta_max', [np.pi, np.pi/2, np.pi, 0.3]).value
+
         self.homogeneous_transform_params_left = {
             'T_0_1': ([0, 0, 0], '-y'),
             'T_1_2': ([0.02, 0.02151, 0], 'x'),
@@ -90,11 +88,11 @@ class ImitationControlNode(Node):
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
-            self.theta_min_left,
-            self.theta_max_left,
+            self.theta_min,
+            self.theta_max,
             None, #self.robot_model,
             self.ainex_robot.left_arm_ids, 
-            "l_gripper",
+            "l_gripper_link",
             self.homogeneous_transform_params_left
         )
 
@@ -106,11 +104,11 @@ class ImitationControlNode(Node):
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
-            self.theta_min_right,
-            self.theta_max_right,
+            self.theta_min,
+            self.theta_max,
             None, #self.robot_model,
             self.ainex_robot.right_arm_ids,
-            "r_gripper",
+            "r_gripper_link",
             self.homogeneous_transform_params_right
         )
 
@@ -124,22 +122,24 @@ class ImitationControlNode(Node):
     def target_cb(self, msg: RobotImitationTargets):
         x_left = msg.wrist_target_left.x
         y_left = msg.wrist_target_left.y
+        z_left = msg.wrist_target_left.z
         angle_left_elbow = msg.angle_left_elbow
 
         x_right = msg.wrist_target_right.x
         y_right = msg.wrist_target_right.y
+        z_right = msg.wrist_target_right.z
         angle_right_elbow = msg.angle_right_elbow
 
         q = self.ainex_robot.read_joint_positions_from_robot()
 
         optimal_solution_left = self.left_hand_controller.solve_nmpc(
             q[self.ainex_robot.left_arm_ids],
-            [x_left, y_left, angle_left_elbow]
+            [x_left, y_left, z_left, angle_left_elbow]
         )
         
         optimal_solution_right = self.right_hand_controller.solve_nmpc(
             q[self.ainex_robot.right_arm_ids],
-            [x_right, y_right, angle_right_elbow]
+            [x_right, y_right, z_right, angle_right_elbow]
         )
 
         self.ainex_robot.update(
@@ -161,14 +161,6 @@ class ImitationControlNode(Node):
         # Move robot to initial position
         self.ainex_robot.move_to_initial_position(q_init)
 
-    def publish_joint_states(self):
-        """Publish current joint states."""
-        joint_state_msg = JointState()
-        joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
-        joint_state_msg.name = self.joint_names
-        joint_state_msg.position = self.q.tolist()
-        joint_state_msg.velocity = self.v.tolist()
-        self.joint_states_pub.publish(joint_state_msg)
 
 
 def main(args=None):
