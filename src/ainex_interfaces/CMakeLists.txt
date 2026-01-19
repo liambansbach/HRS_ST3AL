@@ -23,6 +23,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CubeBBox.msg"
   "msg/CubeBBoxList.msg"
   "msg/RobotImitationTargets.msg"
+  "msg/ManipulationSeq.msg"
+  "msg/ManipulationStep.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs visualization_msgs
 )
 

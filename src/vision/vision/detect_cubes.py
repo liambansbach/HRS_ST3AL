@@ -64,9 +64,10 @@ class CubeDetector(Node):
 
         # TODO adapt paths and update
         # Histogram paths
-        self.red_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_red.npy"
-        self.green_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_green.npy"
-        self.blue_hist_path = "/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_blue.npy"
+        
+        self.red_hist_path = "/home/niklas/Repositories/HRS_ST3AL/src/vision/vision/maalon/hist_red.npy"
+        self.green_hist_path = "/home/niklas/Repositories/HRS_ST3AL/src/vision/vision/maalon/hist_green.npy"
+        self.blue_hist_path = "/home/niklas/Repositories/HRS_ST3AL/src/vision/vision/maalon/hist_blue.npy"
 
         self.trackers = {
             "red":   {
