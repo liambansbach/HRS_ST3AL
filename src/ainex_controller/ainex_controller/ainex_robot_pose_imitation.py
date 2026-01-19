@@ -5,6 +5,11 @@ from rclpy.node import Node
 from ainex_motion.joint_controller import JointController
 from sensor_msgs.msg import JointState
 
+"""
+Important NOTE:
+Seems like in here the left and right arms are swapped
+"""
+
 class AinexRobot():
     def __init__(self, node: Node, model: AiNexModel, dt: float, sim: bool = True):
         """ Visualize simulation and interface with real robot"""
