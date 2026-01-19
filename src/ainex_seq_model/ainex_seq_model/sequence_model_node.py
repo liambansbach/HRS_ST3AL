@@ -2,6 +2,7 @@
 """
 This node listens to the /cubes_position topic, where every message contains the current bounding boxes
 for the red, green, and blue cubes. Each time a message arrives, the callback runs a small processing pipeline:
+<<<<<<< HEAD
 it first reads the cube data (IDs + bbox center/size), then stores it in a short history so it can compare
 the current frame to the last few frames. Using that history, it estimates whether each cube is moving,
 still, or temporarily missing (occluded). Based on those motion signals, it runs a simple state machine per
@@ -16,13 +17,35 @@ Subscribes to CubeBBoxList messages on /cubes_position
 
 TODO: Get reliable World State Updates (better bag needed)
 TODO: Publishing
+=======
+    it first reads the cube data (IDs + bbox center/size), then stores it in a short history so it can compare
+    the current frame to the last few frames. Using that history, it estimates whether each cube is moving,
+    still, or temporarily missing (occluded). Based on those motion signals, it runs a simple state machine per
+    cube to detect events like “this cube was picked up” (was still → starts moving/disappears) and “this cube
+    was placed” (was moving → becomes still again). When a place event happens, it then compares the placed
+    cube’s position to the other cubes to decide basic relations like left/right/front/behind and whether it
+    looks like it was put on top of another cube. Finally, it logs or publishes the detected events and the
+    current symbolic “stacking/placement state,” which is what you’ll later use to imitate the demonstrated
+    manipulation sequence.
+
+Subscribes to CubeBBoxList messages on /cubes_position
+
+hook functions for: ingesting observations, maintaining per-cube history, detecting
+pick/place events, extracting relative relations (left/right/front/behind + stacking),
+
+Publishes the resulting symbolic sequence.
+>>>>>>> 3e05762 (Sequence Model running,, no reliable world state)
 """
 
 import rclpy
 from rclpy.node import Node
 from collections import deque #double ended queue as buffer
 
+<<<<<<< HEAD
 from ainex_interfaces.msg import ManipulationSeq, CubeBBoxList
+=======
+from ainex_interfaces.msg import ManipulationSeq, ManipulationStep, CubeBBoxList
+>>>>>>> 3e05762 (Sequence Model running,, no reliable world state)
 
 
 class SequenceModel(Node):
@@ -46,7 +69,11 @@ class SequenceModel(Node):
         for cid in self.cube_ids:
             self.histories[cid] = deque(maxlen=self.history_len)
 
+<<<<<<< HEAD
         # ---- Motion estimation params (TUNE HERE) ----
+=======
+    # ---- Motion estimation params (TUNE HERE) ----
+>>>>>>> 3e05762 (Sequence Model running,, no reliable world state)
         self.motion_window = 10         # how many recent frames to consider
         self.v_moving_thresh = 15.0     # > this => moving
         self.v_still_thresh = 7.0       # < this => still
