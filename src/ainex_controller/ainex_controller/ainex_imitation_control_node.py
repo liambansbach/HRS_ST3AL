@@ -9,6 +9,8 @@ from ainex_controller.ainex_robot_pose_imitation import AinexRobot
 from ainex_controller.nmpc_controller import NMPC
 
 from ainex_interfaces.msg import RobotImitationTargets
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
 
 """ 
     Main control node for performing Upperbody Imitation on the Ainex Humanoid Robot.
@@ -34,11 +36,10 @@ from ainex_interfaces.msg import RobotImitationTargets
         Q_diag: Optimization weights for reference error [x_wrist, y_wrist, theta_elbow] (default: [100, 100, 10]) 
         R_diag: Optimization weights for forward kinematic input [sho_pitch_dot, sho_roll_dot, el_pitch_dot, el_yaw_dot] (default: [0.1, 0.1, 0.1, 0.1])
         theta_dot_max: Maximum speed allowed for a joint (default: 2rad/s)        
-        theta_min_left: Minimum angles allowed in left arm (default: [-pi, -pi, -pi, -pi])
-        theta_max_left: Maximum angles allowed in left arm (default: [pi, pi, pi, pi])
-        theta_min_right: Minimum angles allowed in right arm (default: [-pi, -pi, -pi, -pi])
-        theta_max_right: Maximum angles allowed in right arm (default: [pi, pi, pi, pi])
-
+        theta_min_right: Minimum angles allowed in right arm (default: [-2.09, -np.pi/2, -2.09, -1.9])
+        theta_max_right: Maximum angles allowed in right arm (default: [2.09, np.pi/2, 2.09, 0.3])
+        theta_min_left: Minimum angles allowed in left arm (default: [-2.09, -np.pi/2, -2.09, -1.9])
+        theta_max_left: Maximum angles allowed in left arm (default: [2.09, np.pi/2, 2.09, 0.3])
 """
 
 class ImitationControlNode(Node):
@@ -52,21 +53,38 @@ class ImitationControlNode(Node):
         self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 10]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
-        
-        self.theta_min = self.declare_parameter('theta_min', [-np.pi, -np.pi/2, -np.pi, -1.9]).value
-        self.theta_max = self.declare_parameter('theta_max', [np.pi, np.pi/2, np.pi, 0.3]).value
 
+        # Joint direction conventions (from URDF):
+        # l_sho_roll is inverse to r_sho_roll due to mirroring -> +1 in r_sho_roll = -1 in l_sho_roll (both move arm downwards)
+        # l_sho_pitch +1 = backwards, r_sho_pitch +1 = backwards -> same direction
+        # l_el_pitch +1 = backwards, r_el_pitch +1 = backwards -> same direction  
+        # l_el_yaw +1 = outward, r_el_yaw +1 = inward -> mirrored
+        #
+        # IMPORTANT: CasADi requires min <= max for all bounds!
+        # The mirroring is handled by:
+        #   1. Different homogeneous transform parameters for left/right (y-components have opposite signs)
+        #   2. Negating the y-component of reference targets for mirrored behavior
+        #
+        # Joint order: [sho_pitch, sho_roll, el_pitch, el_yaw]
+        # Using URDF limits directly (symmetric for both arms)
+        self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -np.pi/2, -2.09, -1.9]).value
+        self.theta_max_right = self.declare_parameter('theta_max_right', [2.09, np.pi/2, 2.09, 0.3]).value
+        self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -np.pi/2, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
+        self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, np.pi/2, 2.09, 0.3]).value
+
+
+        # important NOTE: changed T_0_1 and T_2_3 from "-y" to "y". This helpfed with the problem, that the robots hands are facing backwards.
         self.homogeneous_transform_params_left = {
-            'T_0_1': ([0, 0, 0], '-y'),
+            'T_0_1': ([0, 0, 0], 'y'),
             'T_1_2': ([0.02, 0.02151, 0], 'x'),
-            'T_2_3': ([-0.02, 0.07411, 0], '-y'),
+            'T_2_3': ([-0.02, 0.07411, 0], 'y'),
             'T_3_4': ([0.0004, 0.01702, 0.01907], 'z'),
             'T_4_wrist': ([0.01989, 0.0892, -0.019], 'non')}
 
         self.homogeneous_transform_params_right = {
-            'T_0_1': ([0, 0, 0], '-y'),
+            'T_0_1': ([0, 0, 0], 'y'),
             'T_1_2': ([0.02, -0.02151, 0], 'x'),
-            'T_2_3': ([-0.02, -0.07411, 0], '-y'),
+            'T_2_3': ([-0.02, -0.07411, 0], 'y'),
             'T_3_4': ([0.0004, -0.01702, 0.01907], 'z'),
             'T_4_wrist': ([0.01989, -0.0892, -0.019], 'non')}
 
@@ -88,8 +106,8 @@ class ImitationControlNode(Node):
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
-            self.theta_min,
-            self.theta_max,
+            self.theta_min_left,
+            self.theta_max_left,
             None, #self.robot_model,
             self.ainex_robot.left_arm_ids, 
             "l_gripper_link",
@@ -104,8 +122,8 @@ class ImitationControlNode(Node):
             self.Q_diag,
             self.R_diag,
             self.theta_dot_max,
-            self.theta_min,
-            self.theta_max,
+            self.theta_min_right,
+            self.theta_max_right,
             None, #self.robot_model,
             self.ainex_robot.right_arm_ids,
             "r_gripper_link",
@@ -118,6 +136,10 @@ class ImitationControlNode(Node):
             self.target_cb,
             10
         )
+
+        # Publishers for visualizing NMPC reference targets in RViz
+        self.left_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_left', 10)
+        self.right_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_right', 10)
 
     def target_cb(self, msg: RobotImitationTargets):
         x_left = msg.wrist_target_left.x
@@ -142,12 +164,21 @@ class ImitationControlNode(Node):
             [x_right, y_right, z_right, angle_right_elbow]
         )
 
+        # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 
+        # here in such a way that robot isnt able to reach behind himself?
+
         self.ainex_robot.update(
             optimal_solution_left['theta'], 
             optimal_solution_right['theta'],
             optimal_solution_left['theta_dot'], 
             optimal_solution_right['theta_dot'],
             self.dt
+        )
+
+        # Publish reference targets for visualization in RViz
+        self.publish_nmpc_reference(
+            [x_left, y_left, z_left],
+            [x_right, y_right, z_right]
         )
 
     def move_to_inital_position(self):
@@ -161,7 +192,58 @@ class ImitationControlNode(Node):
         # Move robot to initial position
         self.ainex_robot.move_to_initial_position(q_init)
 
+    def publish_nmpc_reference(self, s_ref_left: list, s_ref_right: list):
+        """
+        Publish NMPC reference targets as markers for visualization in RViz.
+        
+        :param s_ref_left: [x, y, z] wrist target position for left arm (relative to shoulder)
+        :param s_ref_right: [x, y, z] wrist target position for right arm (relative to shoulder)
+        """
+        now = self.get_clock().now().to_msg()
 
+        # Left arm reference marker (relative to left shoulder pitch frame)
+        left_marker = Marker()
+        left_marker.header.stamp = now
+        left_marker.header.frame_id = "l_sho_pitch_link"  # Reference frame for left arm FK
+        left_marker.ns = "nmpc_reference"
+        left_marker.id = 0
+        left_marker.type = Marker.SPHERE
+        left_marker.action = Marker.ADD
+        left_marker.pose.position.x = float(s_ref_left[0])
+        left_marker.pose.position.y = float(s_ref_left[1])
+        left_marker.pose.position.z = float(s_ref_left[2])
+        left_marker.pose.orientation.w = 1.0
+        left_marker.scale.x = 0.03  # 3cm sphere
+        left_marker.scale.y = 0.03
+        left_marker.scale.z = 0.03
+        left_marker.color.r = 0.0
+        left_marker.color.g = 1.0  # Green for left
+        left_marker.color.b = 0.0
+        left_marker.color.a = 0.8
+        left_marker.lifetime.sec = 0  # Persistent until updated
+        self.left_ref_marker_pub.publish(left_marker)
+
+        # Right arm reference marker (relative to right shoulder pitch frame)
+        right_marker = Marker()
+        right_marker.header.stamp = now
+        right_marker.header.frame_id = "r_sho_pitch_link"  # Reference frame for right arm FK
+        right_marker.ns = "nmpc_reference"
+        right_marker.id = 1
+        right_marker.type = Marker.SPHERE
+        right_marker.action = Marker.ADD
+        right_marker.pose.position.x = float(s_ref_right[0])
+        right_marker.pose.position.y = float(s_ref_right[1])
+        right_marker.pose.position.z = float(s_ref_right[2])
+        right_marker.pose.orientation.w = 1.0
+        right_marker.scale.x = 0.03  # 3cm sphere
+        right_marker.scale.y = 0.03
+        right_marker.scale.z = 0.03
+        right_marker.color.r = 1.0  # Red for right
+        right_marker.color.g = 0.0
+        right_marker.color.b = 0.0
+        right_marker.color.a = 0.8
+        right_marker.lifetime.sec = 0  # Persistent until updated
+        self.right_ref_marker_pub.publish(right_marker)
 
 def main(args=None):
     rclpy.init(args=args)

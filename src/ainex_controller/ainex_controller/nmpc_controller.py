@@ -16,9 +16,8 @@ class NMPC:
             R_diag = [0.1, 0.1, 0.1, 0.1],
             
             theta_dot_max = 2.0,  
-            theta_min = np.array([-np.pi/2, -np.pi/2, -np.pi/2, -np.pi/2]),
-            theta_max = np.array([np.pi/2, np.pi/2, np.pi/2, np.pi/2]),
-            
+            theta_min = np.array([-2.09, -2.09, -2.09, -2.09]),
+            theta_max = np.array([2.09, 2.09, 2.09, 2.09]),
             urdf_model = None,
             arm_joint_ids = None,
             end_effector_name = None,
@@ -215,6 +214,7 @@ class NMPC:
 
     def solve_nmpc(self, current_Theta, current_s_ref):
         """ Set Parameters """
+        #self.get_logger().info(f'current_s_ref: {current_s_ref}')
         self.opti.set_value(self.Theta_0, current_Theta)
         self.opti.set_value(self.s_ref, current_s_ref)
         
