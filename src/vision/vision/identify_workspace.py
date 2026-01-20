@@ -18,33 +18,47 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from rclpy.callback_groups import ReentrantCallbackGroup
 from pathlib import Path
-
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
-
 from scipy.spatial.transform import Rotation as R
 
 
 class CameraSubscriber(Node):
+    """
+    ROS 2 Node for detecting ArUco markers in camera images, computing their 3D positions,
+    and defining a workspace boundary based on marker locations.
+    
+    This node:
+    - Subscribes to compressed camera images and camera info
+    - Detects ArUco markers (DICT_6X6_250)
+    - Calculates 3D pose of each marker using camera calibration
+    - Defines a convex hull workspace boundary from marker centers
+    - Publishes TF transforms for each detected marker
+    - Provides workspace boundary checking functionality
+    """
+
     def __init__(self):
         super().__init__('camera_subscriber')
         self.cwd = Path.cwd()
 
-        self.camera_k = None
-        self.camera_d = None
+        # Camera calibration parameters (received from camera_info topic)
+        self.camera_k = None  # Intrinsic camera matrix (3x3)
+        self.camera_d = None  # Distortion coefficients
         self.camera_width = None
         self.camera_heigth = None
 
-        # TF broadcaster
+        # TF broadcaster for publishing marker transforms
         self.br = TransformBroadcaster(self)
 
+        # Use reentrant callback group to allow parallel callback execution
         self.cb_group = ReentrantCallbackGroup()
 
-        # QoS: Reliable to ensure camera_info is received
+        # QoS Profile: Best effort for real-time camera data
+        # BEST_EFFORT allows dropping frames if processing is slow
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=1,  # Keep only the latest message
         )
 
         # Subscribe compressed images
@@ -70,17 +84,27 @@ class CameraSubscriber(Node):
         # State variables
         self.camera_info_received = False
 
-        self.frame = None # BGR Frame
-        self.aruco_frame = None
+        # Image frames
+        self.frame = None  # Current BGR frame from camera
+        self.aruco_frame = None  # Frame with ArUco detections drawn
 
-        self.tvecs = None
-        self.rvecs = None
-        self.last_tvec = None
-        self.last_rvec = None
-        self.alpha_pos = 0.2   # 0.1, smaller = smoother
-        self.alpha_rot = 0.2      
+        # 3D pose estimation results
+        self.tvecs = None  # Translation vectors (position) of markers
+        self.rvecs = None  # Rotation vectors (orientation) of markers
+        
+        # Low-pass filter state for smooth pose tracking
+        self.last_tvec = None  # Previous translation for filtering
+        self.last_rvec = None  # Previous rotation for filtering
+        self.alpha_pos = 0.2   # Position filter weight (lower = smoother, slower response)
+        self.alpha_rot = 0.2   # Rotation filter weight (lower = smoother, slower response)
 
     def camera_info_callback(self, msg: CameraInfo):
+        """
+        Callback for camera_info topic. Stores camera calibration parameters.
+        Only processes the first received message since camera parameters are static.
+        
+        :param msg: CameraInfo message containing calibration data
+        """
         if not self.camera_info_received:
             self.get_logger().info(
                 f'Camera Info received: {msg.width}x{msg.height}\n'
@@ -92,22 +116,30 @@ class CameraSubscriber(Node):
             print(f'Distortion coeffs D: {msg.d}')
             self.camera_info_received = True
 
-            self.camera_k = msg.k
-            self.camera_d = msg.d
+            # Store calibration parameters for 3D pose estimation
+            self.camera_k = msg.k  # 3x3 intrinsic matrix (flattened)
+            self.camera_d = msg.d  # Distortion coefficients
             self.camera_width = msg.width
             self.camera_heigth = msg.height
 
     def image_callback_compressed(self, msg: CompressedImage):
+        """
+        Callback for compressed camera images. Decodes JPEG data to BGR format.
+        
+        :param msg: CompressedImage message containing JPEG encoded image
+        """
         try:
-            # Decode the compressed image
+            # Convert compressed image bytes to numpy array
             np_arr = np.frombuffer(msg.data, dtype=np.uint8)
             
+            # Decode JPEG to OpenCV BGR format
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
             if frame is None:
                 self.get_logger().warn('JPEG decode returned None')
                 return
 
+            # Store frame for processing in display loop
             self.frame = frame                  
         except Exception as exc:
             self.get_logger().error(f'Decode error in compressed image: {exc}')
@@ -122,31 +154,41 @@ class CameraSubscriber(Node):
         return True
 
     def display_loop(self):
+        """
+        Main processing loop that runs until shutdown.
+        Processes frames, detects markers, computes poses, and displays results.
+        """
         while rclpy.ok():
             if self.frame is not None:
-                self.aruco_frame = self.frame.copy() #aruco detection from ainex cam
+                # Create a copy for ArUco visualization
+                self.aruco_frame = self.frame.copy()
 
-                # comment out the parts that dont need to be displayed.
+                # Detect ArUco markers in the frame
                 corners, ids, rejected = self.aruco_marker()
+                
+                # Process only if exactly 4 markers are detected (workspace corners)
                 if len(corners) == 4:
+                    # Define workspace boundary from marker positions
                     self.define_boundary_box(corners)
+                    
+                    # Calculate 3D positions if camera is calibrated
                     if self.camera_info_received:
-                        #self.rvecs, self.tvecs = 
                         self.calculate_3d_positions(corners)
-                        #print("rvecs: ", self.rvecs, "tvecs: ", self.tvecs)
+                    
+                    # Publish TF transforms for detected markers
                     if self.tvecs is not None and self.rvecs is not None:
-                        self.publish_transforms()#self.rvecs, self.tvecs, self.br)
+                        self.publish_transforms()
 
-                        #here one can test the check_if_in_workspace function:
-                        # calculate mean of centers of markers
+                        # TEST: Verify workspace boundary checking function
+                        # Calculate centroid of all marker centers
                         centers_of_centers = self.centers.mean(axis=0)
                         print("centers_of_centers: ", centers_of_centers)
+                        # Test point inside workspace (should be True)
                         test = self.check_if_in_workspace((centers_of_centers[0], centers_of_centers[1]))
                         print("is the point in the workspace? ", test)
+                        # Test point far outside workspace (should be False)
                         test = self.check_if_in_workspace((centers_of_centers[0]+1000, centers_of_centers[1]+1000))
                         print("is the point in the workspace? ", test)
-
-
 
                 cv2.imshow('Camera Subscrber', self.frame)
                 cv2.imshow('3D marker position', self.aruco_frame)
@@ -164,110 +206,115 @@ class CameraSubscriber(Node):
         """
         Detects ArUco markers in the current frame and draws them.
 
-        :param self: none
-        
-        :return: 
-        corners: 2D coordinates of each edge of each detected marker corners, hence size Nx4 
-        ids: IDs of detected markers
-        rejected: Rejected candidates during detection
+        :return:
+            corners: 2D coordinates of each edge of each detected marker corners, hence size Nx4
+            ids: IDs of detected markers
+            rejected: Rejected candidates during detection
         """
-
-
-        # check if frame is empty
+        # Check if frame is empty
         if self.aruco_frame is None or self.aruco_frame.size == 0:
             return
 
         gray = cv2.cvtColor(self.aruco_frame, cv2.COLOR_BGR2GRAY)
 
-        # make it stable for different versions of opencv because the syntax differs for the aruco lib
-        DICT_ID = cv2.aruco.DICT_6X6_250 #markers used in the hrs lab
-        #DICT_ID = cv2.aruco.DICT_5X5_50 #markers on the pizza carton
+        # Make it stable for different versions of OpenCV
+        DICT_ID = cv2.aruco.DICT_6X6_250  # Markers used in the HRS lab
+        # DICT_ID = cv2.aruco.DICT_5X5_50  # Alternative: markers on the pizza carton
         if hasattr(cv2.aruco, "getPredefinedDictionary"):
             aruco_dict = cv2.aruco.getPredefinedDictionary(DICT_ID)
         else:
             aruco_dict = cv2.aruco.Dictionary_get(DICT_ID)
 
-        # DetectorParameters -> make it stable for different versions of opencv because the syntax differs for the aruco lib
+        # DetectorParameters: handle different OpenCV versions
         if hasattr(cv2.aruco, "DetectorParameters_create"):
             parameters = cv2.aruco.DetectorParameters_create()
         else:
             parameters = cv2.aruco.DetectorParameters()
-           
 
-        # Detektion -> make it stable for different versions of opencv because the syntax differs for the aruco lib
-        if hasattr(cv2.aruco, "ArucoDetector"):                   # OpenCV >= 4.7
+        # Detection: handle different OpenCV versions
+        if hasattr(cv2.aruco, "ArucoDetector"):  # OpenCV >= 4.7
             detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
             corners, ids, rejected = detector.detectMarkers(gray)
-        else:                                                      # Older Versions
+        else:  # Older versions
             corners, ids, rejected = cv2.aruco.detectMarkers(
                 gray, aruco_dict, parameters=parameters
             )
+
         # Draw detected markers
         cv2.aruco.drawDetectedMarkers(self.aruco_frame, corners, ids)
         return corners, ids, rejected
-    
+
     def calc_centers(self, corners):
+        """
+        Calculate the center point of each detected ArUco marker.
+        
+        :param corners: List of marker corners, each with shape (1, 4, 2)
+        :return: Array of marker centers with shape (N, 2) where N is number of markers
+        """
         centers = []
         for marker in corners:
-            pts = marker[0]            # (4,2)
-            center = pts.mean(axis=0)  # (2,)
+            pts = marker[0]            # Extract 4 corner points (4, 2)
+            center = pts.mean(axis=0)  # Calculate mean to get center (2,)
             centers.append(center)
         return np.array(centers, dtype=np.float32)
-    
 
     def define_boundary_box(self, corners):
-
+        """
+        Define the workspace boundary as a convex hull around detected marker centers.
+        Draws the boundary polygon and marker centers on the visualization frame.
+        
+        :param corners: Detected marker corners from aruco_marker()
+        """
         if corners is None or len(corners) == 0:
             return
 
-        # 1) calculate marker centers
-        self.centers = self.calc_centers(corners)  # (N,2) float32
+        # Step 1: Calculate center point of each marker
+        self.centers = self.calc_centers(corners)  # Shape: (N, 2) float32
 
-        # 2) convex hull on centers
-        # maybe use cv2.minAreaRect(self.centers) instead?
-        # hull = centers, just in another order (maybe it orders it clockwise?)
-        self.hull = cv2.convexHull(self.centers)          # (M,1,2) float32
-        hull_i32 = self.hull.astype(np.int32)        # required for drawing
-        #print("hull_i32: ", hull_i32)
+        # Step 2: Compute convex hull to define workspace boundary
+        # The hull is the smallest convex polygon containing all marker centers
+        # Alternative: cv2.minAreaRect(self.centers) for minimum bounding rectangle
+        self.hull = cv2.convexHull(self.centers)  # Shape: (M, 1, 2) float32
+        hull_i32 = self.hull.astype(np.int32)     # Convert to int32 for drawing
 
-
-        # 3) draw (close polygon)
+        # Step 3: Draw workspace boundary polygon (red line)
         cv2.polylines(
                 self.aruco_frame,
                 [hull_i32],
                 isClosed=True,
-                color=(0, 0, 255),
+                color=(0, 0, 255),  # Red (BGR format)
                 thickness=2
             )
         
-        # Optional: visualize the centers themselves
+        # Visualize marker centers as green circles
         for (x, y) in self.centers.astype(np.int32):
             cv2.circle(self.aruco_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
-                
 
     def calculate_3d_positions(self, corners, marker_length=0.05):
         """
-        Calculate the 3D positions of detected ArUco markers.
+        Calculate the 3D pose (position and orientation) of detected ArUco markers
+        using camera calibration parameters.
 
         :param corners: Detected marker corners from aruco_marker()
-        :param marker_length: Length of the marker's side in meters
-        :return: Tuple of rotation vectors, translation vectors, and IDs
+        :param marker_length: Physical size of the marker's side in meters (default: 5cm)
+        :return: Sets self.rvecs (rotation) and self.tvecs (translation) as numpy arrays
         """
         if self.camera_k is None or self.camera_d is None:
             self.get_logger().warn("Camera parameters not set. Cannot compute 3D positions.")
             return None, None, None
 
-        # Convert camera parameters to numpy arrays
-        camera_matrix = np.array(self.camera_k).reshape((3, 3))
-        dist_coeffs = np.array(self.camera_d)
+        # Convert flattened camera parameters to proper matrix formats
+        camera_matrix = np.array(self.camera_k).reshape((3, 3))  # 3x3 intrinsic matrix
+        dist_coeffs = np.array(self.camera_d)  # Distortion coefficients
 
         # Prepare lists to hold rotation and translation vectors
-        rvecs = []
-        tvecs = []
+        rvecs = []  # Rotation vectors (axis-angle representation)
+        tvecs = []  # Translation vectors (3D position in camera frame)
 
-        # Iterate over each detected marker
+        # Estimate pose for each detected marker
         for i, corner in enumerate(corners):
-            # Estimate pose of each marker
+            # Solve PnP (Perspective-n-Point) problem to get marker pose
+            # Returns rotation vector (rvec) and translation vector (tvec)
             rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
                 corner,
                 marker_length,
@@ -277,72 +324,96 @@ class CameraSubscriber(Node):
             rvecs.append(rvec)
             tvecs.append(tvec)
 
+        # Store results as numpy arrays for further processing
         self.rvecs = np.array(rvecs)
         self.tvecs = np.array(tvecs)
-    # would require an joint_state update, as robot stands upwards in rviz but not in reality
+        # NOTE: May require joint_state update since robot coordinate frame differs from camera
 
-
-    def publish_transforms(self):#, rvecs, tvecs, broadcaster):
-        # Nimm den ersten Marker (falls du mehrere willst, musst du hier erweitern)
-        tvec = self.tvecs.astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
-        rvec = self.rvecs.astype(float)
-        # === Low-pass Filter auf Translation ===
+    def publish_transforms(self):
+        """
+        Publish TF transforms for all detected ArUco markers.
+        Applies low-pass filtering for smooth tracking and converts from OpenCV
+        camera frame to ROS standard coordinate frame (camera_link).
+        """
+        # Get raw pose data from detection (OpenCV camera coordinate frame)
+        tvec = self.tvecs.astype(float)  # Translation [tx, ty, tz]
+        rvec = self.rvecs.astype(float)  # Rotation (Rodrigues vector)
+        
+        # === Apply Low-Pass Filter to Translation (Position) ===
+        # Smooths jittery detections using exponential moving average
         if self.last_tvec is None:
-            tvec_f = tvec
+            tvec_f = tvec  # First frame: no filtering
         else:
+            # Weighted average: alpha controls smoothing (lower = smoother)
             tvec_f = self.alpha_pos * tvec + (1.0 - self.alpha_pos) * self.last_tvec
         self.last_tvec = tvec_f
 
-        # === Low-pass Filter auf Rotation (auf rvec) ===
+        # === Apply Low-Pass Filter to Rotation (Orientation) ===
         if self.last_rvec is None:
-            rvec_f = rvec
+            rvec_f = rvec  # First frame: no filtering
         else:
+            # Weighted average for rotation vector
             rvec_f = self.alpha_rot * rvec + (1.0 - self.alpha_rot) * self.last_rvec
         self.last_rvec = rvec_f
 
-        # === Koordinatensystem-Anpassung ===
+        # === Publish TF Transform for Each Marker ===
         for i in range(tvec_f.shape[0]):
             tvec_f_i = tvec_f[i].flatten()
             rvec_f_i = rvec_f[i].flatten()
 
+            # Extract filtered translation components
             tx = tvec_f_i[0]
             ty = tvec_f_i[1]
             tz = tvec_f_i[2]
 
+            # Create TF message
             t_msg = TransformStamped()
             t_msg.header.stamp = self.get_clock().now().to_msg()
-            t_msg.header.frame_id = "camera_link"
-            t_msg.child_frame_id = "aruco_marker_" + str(i)
+            t_msg.header.frame_id = "camera_link"  # Parent frame (camera)
+            t_msg.child_frame_id = "aruco_marker_" + str(i)  # Child frame (marker)
 
-            t_msg.transform.translation.x = float(tz)    # vor der Kamera
-            t_msg.transform.translation.y = float(-tx)   # links/rechts
-            t_msg.transform.translation.z = float(-ty)   # hoch/runter
+            # === Coordinate Frame Transformation: OpenCV -> ROS ===
+            # OpenCV camera frame: Z forward, X right, Y down
+            # ROS camera_link frame: X forward, Y left, Z up
+            t_msg.transform.translation.x = float(tz)    # Forward (camera Z -> ROS X)
+            t_msg.transform.translation.y = float(-tx)   # Left/Right (camera -X -> ROS Y)
+            t_msg.transform.translation.z = float(-ty)   # Up/Down (camera -Y -> ROS Z)
 
-            # Rotation aus gefiltertem rvec
+            # === Convert Rotation Vector to Quaternion ===
+            # Convert Rodrigues rotation vector to rotation matrix
             R_cv, _ = cv2.Rodrigues(rvec_f_i)
+            # Convert rotation matrix to quaternion using scipy
             r = R.from_matrix(R_cv)
-            qx, qy, qz, qw = r.as_quat()  # [x, y, z, w]
+            qx, qy, qz, qw = r.as_quat()  # Returns [x, y, z, w] format
 
             t_msg.transform.rotation.x = float(qx)
             t_msg.transform.rotation.y = float(qy)
             t_msg.transform.rotation.z = float(qz)
             t_msg.transform.rotation.w = float(qw)
 
-            # TF senden
+            # Broadcast the transform
             self.br.sendTransform(t_msg)
-        
 
-    # maybe TODO: bring robot in a specific position (including updateing the joint_state in rviz), then let it search for the markers (move head)
-    
+    # TODO: Position robot and scan for markers (requires joint_state update in RViz)
 
     def check_if_in_workspace(self, point: Tuple[float, float]) -> bool:
-        # cv2.pointPolygonTest expects contour as (N,1,2) or (N,2)
+        """
+        Check if a 2D point lies within the defined workspace boundary.
+        
+        :param point: Tuple of (x, y) coordinates in image space (pixels)
+        :return: True if point is inside or on the boundary, False if outside
+        """
+        # Prepare convex hull as contour for point-in-polygon test
+        # cv2.pointPolygonTest expects contour with shape (N, 1, 2) or (N, 2)
         contour = self.hull.astype(np.float32)
 
-        # returns: +1 inside, 0 on edge, -1 outside (when measureDist=False)
+        # Perform point-in-polygon test
+        # Returns: +1 if inside, 0 if on edge, -1 if outside (when measureDist=False)
         res = cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False)
+        
+        # Return True if point is inside or on the boundary
         return res >= 0
-            
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -356,6 +427,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
