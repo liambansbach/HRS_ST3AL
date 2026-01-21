@@ -65,12 +65,6 @@ class HumanToAinex(Node):
         wrist_target_left, wrist_target_right = self.robot_wrist_target()
         angle_left_elbow, angle_right_elbow = self.robot_elbow_angle_target()
         
-        # Compute vector angles for loose joint targets
-        (sho_elbow_horiz_left, sho_elbow_vert_left, 
-         elbow_wrist_horiz_left, elbow_wrist_vert_left) = self.compute_arm_vector_angles('left')
-        (sho_elbow_horiz_right, sho_elbow_vert_right, 
-         elbow_wrist_horiz_right, elbow_wrist_vert_right) = self.compute_arm_vector_angles('right')
-        
         msg = RobotImitationTargets()
 
         self.visualize_targets(wrist_target_left, "left")
@@ -80,17 +74,6 @@ class HumanToAinex(Node):
         msg.wrist_target_right = wrist_target_right
         msg.angle_left_elbow = float(angle_left_elbow)
         msg.angle_right_elbow = float(angle_right_elbow)
-        
-        # New vector angle fields
-        msg.sho_elbow_horiz_left = float(sho_elbow_horiz_left)
-        msg.sho_elbow_vert_left = float(sho_elbow_vert_left)
-        msg.sho_elbow_horiz_right = float(sho_elbow_horiz_right)
-        msg.sho_elbow_vert_right = float(sho_elbow_vert_right)
-        
-        msg.elbow_wrist_horiz_left = float(elbow_wrist_horiz_left)
-        msg.elbow_wrist_vert_left = float(elbow_wrist_vert_left)
-        msg.elbow_wrist_horiz_right = float(elbow_wrist_horiz_right)
-        msg.elbow_wrist_vert_right = float(elbow_wrist_vert_right)
 
         self.robot_targets_pub.publish(msg)
 
@@ -188,88 +171,6 @@ class HumanToAinex(Node):
         angle_right_elbow = np.arccos(np.dot(HOA_right, HUA_right) / (HOA_len_right * HUA_len_right))
 
         return angle_left_elbow, angle_right_elbow
-
-    def compute_arm_vector_angles(self, side: str):
-        """
-        Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
-        
-        These angles represent the direction of:
-          - Shoulder->Elbow vector (upper arm)
-          - Elbow->Wrist vector (forearm)
-        
-        relative to a reference direction (pointing forward/down).
-        
-        The angles are computed in the robot coordinate frame:
-          - robot.x = forward (MediaPipe -z)
-          - robot.y = left/right (MediaPipe x)
-          - robot.z = up/down (MediaPipe -y)
-        
-        Args:
-            side: 'left' or 'right'
-        
-        Returns:
-            (sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert)
-            All angles in radians.
-        """
-        if side == 'left':
-            shoulder = self.left_shoulder
-            elbow = self.left_elbow
-            wrist = self.left_wrist
-        else:
-            shoulder = self.right_shoulder
-            elbow = self.right_elbow
-            wrist = self.right_wrist
-        
-        # Compute vectors in MediaPipe coordinates
-        sho_elbow_mp = np.array([
-            elbow.x - shoulder.x,
-            elbow.y - shoulder.y,
-            elbow.z - shoulder.z
-        ])
-        elbow_wrist_mp = np.array([
-            wrist.x - elbow.x,
-            wrist.y - elbow.y,
-            wrist.z - elbow.z
-        ])
-        
-        # Transform to robot coordinates:
-        # robot.x = -mp.z, robot.y = mp.x, robot.z = -mp.y
-        sho_elbow_robot = np.array([
-            -sho_elbow_mp[2],   # x = -mp.z (forward)
-            sho_elbow_mp[0],    # y = mp.x (left/right)
-            -sho_elbow_mp[1]    # z = -mp.y (up/down)
-        ])
-        elbow_wrist_robot = np.array([
-            -elbow_wrist_mp[2],
-            elbow_wrist_mp[0],
-            -elbow_wrist_mp[1]
-        ])
-        
-        def vector_to_angles(vec):
-            """
-            Convert a 3D vector to horizontal (azimuth) and vertical (elevation) angles.
-            
-            Horizontal angle: angle in XY plane from X axis (atan2(y, x))
-            Vertical angle: angle from XY plane (atan2(z, sqrt(x²+y²)))
-            """
-            x, y, z = vec
-            length = np.linalg.norm(vec)
-            if length < 1e-6:
-                return 0.0, 0.0
-            
-            # Horizontal angle (azimuth): angle in XY plane
-            horiz = np.arctan2(y, x)
-            
-            # Vertical angle (elevation): angle from XY plane
-            xy_length = np.sqrt(x**2 + y**2)
-            vert = np.arctan2(z, xy_length)
-            
-            return horiz, vert
-        
-        sho_elbow_horiz, sho_elbow_vert = vector_to_angles(sho_elbow_robot)
-        elbow_wrist_horiz, elbow_wrist_vert = vector_to_angles(elbow_wrist_robot)
-        
-        return sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert
     
     def visualize_targets(self, xyz, side):
         """ 

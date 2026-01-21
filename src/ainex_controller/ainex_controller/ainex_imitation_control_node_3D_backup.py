@@ -47,32 +47,22 @@ class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
 
-        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value #was 1 before testing around
+        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 0.2).value #was 1 before testing around
         self.N = self.declare_parameter('N', 10).value #was 10 before testing around
         self.n_joints = self.declare_parameter('n_joints', 4).value
-        # 7 reference values: [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
-        self.n_ref_vals = self.declare_parameter('n_ref_vals', 7).value
-        # Q weights: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
-        # Position tracking (high weight), joint angle tracking (lower weight as "loose target")
-        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 5, 5, 5, 5]).value
+        self.n_ref_vals = self.declare_parameter('n_ref_vals', 4).value
+        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 10]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
 
         """
-        Testing Protocol of NMPC parameters for 3D version and N_targets = 4 (with gaming pc not real robot):
+        Testing Protocol of NMPC parameters (with gaming pc not real robot):
         - Start with T_HORIZON_s = 1s, N = 100 -> didnt work, robot didnt move 
         - T_HORIZON_s = 2s, N = 30 -> makes pc crash after some time? -> robot didnt move at the start?
         - T_HORIZON_s = 0.5s, N = 5 -> robot moved fast, but with some offsets? -> but seemed kind of ok
         - T_HORIZON_s = 0.2s, N = 5 -> seems to work aswell
         - T_HORIZON_s = 0.2s, N = 10 -> seems to work aswell, maybe a bit smoother?
         """ 
-        """
-        Testing Protocol of NMPC parameters for 3D version and N_targets = 7 (with gaming pc not real robot):
-        - Start with T_HORIZON_s = 0.2s, N = 10 -> didnt work, robots arms are extended 
-        - T_HORIZON_s = 2s, N = 0 -> robot jiggles a lot and arms dont really follow targets -> seems like transformations are weird or initial positions are off??
-        - T_HORIZON_s = 1s, N = 20 -> destroyed PC after a few seconds (: -> too many steps?
-        - T_HORIZON_s = 1s, N = 10 -> didnt crash and follows target but very weirdly with a big offset -> seems like transformations are weird are off?? -> this shouldnt be? -> seems like their is an offset of pi/2 for reachable points?
-         """
 
         # Joint direction conventions (from URDF):
         # l_sho_roll is inverse to r_sho_roll due to mirroring -> +1 in r_sho_roll = -1 in l_sho_roll (both move arm downwards)
@@ -87,10 +77,10 @@ class ImitationControlNode(Node):
         #
         # Joint order: [sho_pitch, sho_roll, el_pitch, el_yaw]
         # Using URDF limits directly (symmetric for both arms)
-        self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -2.09, -2.09, -1.9]).value
-        self.theta_max_right = self.declare_parameter('theta_max_right', [2.09, 2.09, 2.09, 0.3]).value
-        self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -2.09, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
-        self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, 2.09, 2.09, 0.3]).value
+        self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -np.pi/2, -2.09, -1.9]).value
+        self.theta_max_right = self.declare_parameter('theta_max_right', [2.09, np.pi/2, 2.09, 0.3]).value
+        self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -np.pi/2, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
+        self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, np.pi/2, 2.09, 0.3]).value
 
         self.dt = self.T_HORIZON_s / self.N
 
@@ -422,45 +412,26 @@ class ImitationControlNode(Node):
         return T_sho_gripper.homogeneous
 
     def target_cb(self, msg: RobotImitationTargets):
-        # Wrist position targets
         x_left = msg.wrist_target_left.x
         y_left = msg.wrist_target_left.y
         z_left = msg.wrist_target_left.z
+        angle_left_elbow = msg.angle_left_elbow
 
         x_right = msg.wrist_target_right.x
         y_right = msg.wrist_target_right.y
         z_right = msg.wrist_target_right.z
-        
-        # Joint angle targets from arm vector angles:
-        # sho_pitch ~ vertical angle of shoulder-elbow (elevation)
-        # sho_roll ~ horizontal angle of shoulder-elbow (azimuth)  
-        # el_pitch ~ vertical angle of elbow-wrist (elevation)
-        # el_yaw ~ horizontal angle of elbow-wrist (azimuth)
-        sho_pitch_target_left = msg.sho_elbow_vert_left
-        sho_roll_target_left = msg.sho_elbow_horiz_left
-        el_pitch_target_left = msg.elbow_wrist_vert_left
-        el_yaw_target_left = msg.elbow_wrist_horiz_left
-        
-        sho_pitch_target_right = msg.sho_elbow_vert_right
-        sho_roll_target_right = msg.sho_elbow_horiz_right
-        el_pitch_target_right = msg.elbow_wrist_vert_right
-        el_yaw_target_right = msg.elbow_wrist_horiz_right
+        angle_right_elbow = msg.angle_right_elbow
 
         q = self.ainex_robot.read_joint_positions_from_robot()
 
-        # Reference: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
         optimal_solution_left = self.left_hand_controller.solve_nmpc(
             q[self.ainex_robot.left_arm_ids],
-            [x_left, y_left, z_left, 
-             sho_pitch_target_left, sho_roll_target_left, 
-             el_pitch_target_left, el_yaw_target_left]
+            [x_left, y_left, z_left, angle_left_elbow]
         )
         
         optimal_solution_right = self.right_hand_controller.solve_nmpc(
             q[self.ainex_robot.right_arm_ids],
-            [x_right, y_right, z_right,
-             sho_pitch_target_right, sho_roll_target_right,
-             el_pitch_target_right, el_yaw_target_right]
+            [x_right, y_right, z_right, angle_right_elbow]
         )
 
         # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 

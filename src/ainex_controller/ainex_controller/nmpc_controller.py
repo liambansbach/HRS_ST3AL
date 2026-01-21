@@ -10,9 +10,11 @@ class NMPC:
             N = 20,
             
             n_joints = 4,
-            n_ref_vals = 4,
+            n_ref_vals = 7,
             
-            Q_diag = [100.0, 100.0, 100.0, 10.0],
+            # Q weights: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
+            # Position (high weight), joint angles (lower weight as loose targets)
+            Q_diag = [100.0, 100.0, 100.0, 30.0, 30.0, 30.0, 30.0],
             R_diag = [0.1, 0.1, 0.1, 0.1],
             
             theta_dot_max = 2.0,  
@@ -48,7 +50,8 @@ class NMPC:
         self.dt = T_HORIZON_s / N           # Time step (delta t)
 
         self.n_joints = n_joints            # 0: Shoulder Pitch, 1: Shoulder Roll, 2: Elbow Pitch, 3: Elbow Yaw
-        self.n_ref_vals = n_ref_vals  # 0: x, 1: y, 2: z, 3: theta_elbow
+        # State: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
+        self.n_ref_vals = n_ref_vals
 
         # Weight Matrices for tuning optimization
         self.Q_diag = Q_diag                #[x, y, theta_elbow]
@@ -67,15 +70,6 @@ class NMPC:
 
         self._define_forward_kinemtics_manually()
 
-        """ if urdf_model == None:
-            self._define_forward_kinemtics_manually()
-        else:
-            self._define_forward_kinematics_from_urdf(
-                urdf_model,
-                arm_joint_ids,
-                end_effector_name,            
-            ) """
-
         self._nmpc_formulation()
 
         self.opti.solver('sqpmethod', solver_options)
@@ -83,32 +77,6 @@ class NMPC:
         self.prev_Theta = None
         self.prev_U = None
 
-    """ def _define_forward_kinematics_from_urdf(self, urdf_model, arm_joint_ids, end_effector_name):
-        
-        #Forward kinematics from URDF using Pinocchio with Casadi.
-        
-        cmodel = cpin.Model(urdf_model) # Create a CasADi-compatible model
-        cdata = cmodel.createData()
-
-        theta = ca.SX.sym('theta', self.n_joints)
-        
-        q_full = ca.SX.zeros(urdf_model.nq)
-        
-        # Map the optimized variables 'theta' into the full robot configuration vector
-        for i, idx_q in enumerate(arm_joint_ids):
-            q_full[idx_q] = theta[i]
-
-        cpin.forwardKinematics(cmodel, cdata, q_full) # Compute symbolic Forward Kinematics
-        cpin.updateFramePlacements(cmodel, cdata)
-
-        if urdf_model.existFrame(end_effector_name):
-            ee_frame_id = urdf_model.getFrameId(end_effector_name) # Get the Frame ID of the end effector
-        else:
-            raise ValueError(f"Frame {end_effector_name} does not exist.")
-
-        p_wrist = cdata.oMf[ee_frame_id].translation # Extract the position of the end effector
-
-        self.forward_kinematics_wrist = ca.Function('forward_kinematics_wrist', [theta], [p_wrist]) """
 
     def _define_forward_kinemtics_manually(self):
         """
@@ -161,8 +129,8 @@ class NMPC:
         # Total Chain: Shoulder -> Wrist
         T_shoulder_wrist = ca.mtimes([T_0_1, T_1_2, T_2_3, T_3_4, T_4_wrist])
 
-        # Extract Position (x, y, z)
-        p_wrist = T_shoulder_wrist[0:(self.n_ref_vals-1), 3]
+        # Extract Position (x, y, z) - always first 3 components
+        p_wrist = T_shoulder_wrist[0:3, 3]
 
         self.forward_kinematics_wrist = ca.Function('forward_kinematics_wrist', [theta], [p_wrist])
 
@@ -175,7 +143,8 @@ class NMPC:
 
         """ Parameters """
         self.Theta_0 = self.opti.parameter(self.n_joints)        # Initial Joint Configuration
-        self.s_ref = self.opti.parameter(self.n_ref_vals)     # Reference Trajectory for States s = [x, y, z, theta_elbow]
+        # Reference: s_ref = [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
+        self.s_ref = self.opti.parameter(self.n_ref_vals)
 
         """ Objective Function """
         cost = 0
@@ -184,9 +153,10 @@ class NMPC:
 
         for k in range(self.N):
             """ Calculate current State """                 
-            s_k  = ca.vertcat(                                   # s_k = [x_wrist, y_wrist, z_wrist, theta_elbow]
-                self.forward_kinematics_wrist(self.Theta[:, k]), 
-                self.Theta[(self.n_joints-1), k]
+            # s_k = [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
+            s_k  = ca.vertcat(
+                self.forward_kinematics_wrist(self.Theta[:, k]),  # [x, y, z]
+                self.Theta[:, k]  # [sho_pitch, sho_roll, el_pitch, el_yaw]
                 )                                
             
             e_k = s_k - self.s_ref                               # Error
@@ -195,8 +165,8 @@ class NMPC:
             cost += 0.5 * ca.mtimes([e_k.T, self.Q, e_k]) + 0.5 * ca.mtimes([self.U[:,k].T, self.R, self.U[:,k]])  
 
         s_N  = ca.vertcat(
-            self.forward_kinematics_wrist(self.Theta[:, self.N]), 
-            self.Theta[(self.n_joints-1), self.N]
+            self.forward_kinematics_wrist(self.Theta[:, self.N]),
+            self.Theta[:, self.N]
             )
         e_N  = s_N - self.s_ref
         cost += 0.5 * ca.mtimes([e_N.T, self.Q, e_N])            # Terminal cost
