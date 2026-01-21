@@ -1,5 +1,5 @@
 import numpy as np
-
+import pinocchio as pin
 import rclpy
 from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
@@ -11,6 +11,7 @@ from ainex_controller.nmpc_controller import NMPC
 from ainex_interfaces.msg import RobotImitationTargets
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+
 
 """ 
     Main control node for performing Upperbody Imitation on the Ainex Humanoid Robot.
@@ -46,13 +47,22 @@ class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
 
-        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value
-        self.N = self.declare_parameter('N', 10).value
+        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 0.2).value #was 1 before testing around
+        self.N = self.declare_parameter('N', 10).value #was 10 before testing around
         self.n_joints = self.declare_parameter('n_joints', 4).value
         self.n_ref_vals = self.declare_parameter('n_ref_vals', 4).value
         self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 10]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
+
+        """
+        Testing Protocol of NMPC parameters (with gaming pc not real robot):
+        - Start with T_HORIZON_s = 1s, N = 100 -> didnt work, robot didnt move 
+        - T_HORIZON_s = 2s, N = 30 -> makes pc crash after some time? -> robot didnt move at the start?
+        - T_HORIZON_s = 0.5s, N = 5 -> robot moved fast, but with some offsets? -> but seemed kind of ok
+        - T_HORIZON_s = 0.2s, N = 5 -> seems to work aswell
+        - T_HORIZON_s = 0.2s, N = 10 -> seems to work aswell, maybe a bit smoother?
+        """ 
 
         # Joint direction conventions (from URDF):
         # l_sho_roll is inverse to r_sho_roll due to mirroring -> +1 in r_sho_roll = -1 in l_sho_roll (both move arm downwards)
@@ -72,30 +82,63 @@ class ImitationControlNode(Node):
         self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -np.pi/2, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
         self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, np.pi/2, 2.09, 0.3]).value
 
-
-        # important NOTE: changed T_0_1 and T_2_3 from "-y" to "y". This helpfed with the problem, that the robots hands are facing backwards.
-        self.homogeneous_transform_params_left = {
-            'T_0_1': ([0, 0, 0], 'y'),
-            'T_1_2': ([0.02, 0.02151, 0], 'x'),
-            'T_2_3': ([-0.02, 0.07411, 0], 'y'),
-            'T_3_4': ([0.0004, 0.01702, 0.01907], 'z'),
-            'T_4_wrist': ([0.01989, 0.0892, -0.019], 'non')}
-
-        self.homogeneous_transform_params_right = {
-            'T_0_1': ([0, 0, 0], 'y'),
-            'T_1_2': ([0.02, -0.02151, 0], 'x'),
-            'T_2_3': ([-0.02, -0.07411, 0], 'y'),
-            'T_3_4': ([0.0004, -0.01702, 0.01907], 'z'),
-            'T_4_wrist': ([0.01989, -0.0892, -0.019], 'non')}
-
         self.dt = self.T_HORIZON_s / self.N
 
         pkg = get_package_share_directory('ainex_description') # get package path
-        urdf_path = pkg + '/urdf/ainex.urdf'
-        self.robot_model = AiNexModel(self, urdf_path)
+        self.urdf_path = pkg + '/urdf/ainex.urdf'
+        self.robot_model = AiNexModel(self, self.urdf_path)
 
         # Create AinexRobot instance
         self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=True)
+
+        # manual homogeneous transform parameters for FK (to be replaced by URDF-extracted version)
+        # important NOTE: this seems to fit for 3D, but not 100% sure (got it by testing different values)
+        # self.homogeneous_transform_params_left = {
+        #     'T_0_1': ([0, 0, 0], 'y'),
+        #     'T_1_2': ([0.02, 0.02151, 0], '-x'),
+        #     'T_2_3': ([-0.02, 0.07411, 0], 'y'),
+        #     'T_3_4': ([0.0004, 0.01702, 0.01907], '-z'),
+        #     'T_4_wrist': ([0.01989, 0.0892, -0.019], 'non')}
+
+        # self.homogeneous_transform_params_right = {
+        #     'T_0_1': ([0, 0, 0], 'y'),
+        #     'T_1_2': ([0.02, -0.02151, 0], '-x'),
+        #     'T_2_3': ([-0.02, -0.07411, 0], '-y'),
+        #     'T_3_4': ([0.0004, -0.01702, 0.01907], 'z'),
+        #     'T_4_wrist': ([0.01989, -0.0892, -0.019], 'non')}
+
+        # Print FK comparison: manual params vs URDF-extracted
+        print("=== FK from URDF (Pinocchio numerical) ===")
+        print("Left gripper at q=0:", self.get_gripper_position_in_shoulder_frame('left'))
+        
+        print("\n=== FK params extracted from URDF ===")
+        left_params = self.extract_fk_params_from_urdf('left')
+        print("Left arm parameters:")
+        for key, val in left_params.items():
+            print(f"  {key}: {val}")
+        right_params = self.extract_fk_params_from_urdf('right')
+        print("Right arm parameters:")
+        for key, val in right_params.items():
+            print(f"  {key}: {val}")
+
+        """
+        [ainex_imitation_control_node-4] === FK params extracted from URDF ===
+        [ainex_imitation_control_node-4] Left arm parameters:
+        [ainex_imitation_control_node-4]   T_0_1: ([-5.4627e-05, 0.052491, 0.087448], 'non')
+        [ainex_imitation_control_node-4]   T_1_2: ([0.020003, 0.021507, 0.0], 'x')
+        [ainex_imitation_control_node-4]   T_2_3: ([-0.020003, 0.074109, 0.0], 'non')
+        [ainex_imitation_control_node-4]   T_3_4: ([0.00039506, 0.017019, 0.019072], 'z')
+        [ainex_imitation_control_node-4]   T_4_wrist: ([0.0, 0.0, 0.0], 'non')
+        [ainex_imitation_control_node-4] Right arm parameters:
+        [ainex_imitation_control_node-4]   T_0_1: ([-5.46273713767254e-05, -0.0524909514103703, 0.0874480463620076], 'non')
+        [ainex_imitation_control_node-4]   T_1_2: ([0.020003499818653, -0.021505961295104, 0.0], 'x')
+        [ainex_imitation_control_node-4]   T_2_3: ([-0.0200034998200733, -0.0741099367526448, 0.0], 'non')
+        [ainex_imitation_control_node-4]   T_3_4: ([0.000397813054181526, -0.0170183162715326, 0.0190701823981362], 'z')
+        [ainex_imitation_control_node-4]   T_4_wrist: ([0.0, 0.0, 0.0], 'non')
+        """
+
+        self.homogeneous_transform_params_left = left_params
+        self.homogeneous_transform_params_right = right_params
 
         # Create hand controllers for left and right hands
         self.left_hand_controller = NMPC(
@@ -140,6 +183,233 @@ class ImitationControlNode(Node):
         # Publishers for visualizing NMPC reference targets in RViz
         self.left_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_left', 10)
         self.right_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_right', 10)
+        
+
+
+    def extract_fk_params_from_urdf(self, arm_side: str) -> dict:
+        """
+        Extract the transform parameters (translation, rotation axis) from URDF
+        to build a symbolic CasADi FK function.
+        
+        Args:
+            arm_side: 'left' or 'right'
+        
+        Returns:
+            dict: Transform parameters for each joint in the arm chain
+        """
+        import casadi as ca
+        
+        model = self.robot_model.model
+        
+        if arm_side == 'left':
+            joint_names = ['l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw']
+            gripper_frame = 'l_gripper_link'
+        elif arm_side == 'right':
+            joint_names = ['r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw']
+            gripper_frame = 'r_gripper_link'
+        else:
+            raise ValueError("arm_side must be 'left' or 'right'")
+        
+        def get_axis_string(model, joint_id):
+            """
+            Extract rotation axis from Pinocchio joint.
+            Uses the joint's motion subspace to determine the axis.
+            """
+            import pinocchio as pin
+            
+            joint = model.joints[joint_id]
+            joint_type = joint.shortname()
+            
+            # Debug: print the actual shortname
+            # print(f"Joint {model.names[joint_id]}: shortname = '{joint_type}'")
+            
+            # Method 1: Check shortname for common patterns
+            if 'RX' in joint_type or 'RevoluteX' in joint_type:
+                return 'x'
+            elif 'RY' in joint_type or 'RevoluteY' in joint_type:
+                return 'y'
+            elif 'RZ' in joint_type or 'RevoluteZ' in joint_type:
+                return 'z'
+            
+            # Method 2: For RevoluteUnaligned or other types, check the joint axis
+            # by looking at the motion subspace (S matrix)
+            try:
+                # Get the joint's motion subspace at q=0
+                q = np.zeros(model.nq)
+                data = model.createData()
+                pin.computeJointJacobians(model, data, q)
+                
+                # The joint's local motion subspace
+                # For revolute joints, we look at which axis has rotation
+                S = joint.jointConfigSelector(q[joint.idx_q:joint.idx_q + joint.nq])
+                
+                # Alternatively, check the joint axis directly if available
+                if hasattr(joint, 'axis'):
+                    axis = joint.axis
+                    if abs(axis[0]) > 0.9:
+                        return '-x' if axis[0] < 0 else 'x'
+                    elif abs(axis[1]) > 0.9:
+                        return '-y' if axis[1] < 0 else 'y'
+                    elif abs(axis[2]) > 0.9:
+                        return '-z' if axis[2] < 0 else 'z'
+            except:
+                pass
+            
+            return 'non'
+        
+        # Define known axes from URDF (fallback based on joint naming convention)
+        # From URDF: sho_pitch = Y axis, sho_roll = X axis, el_pitch = Y axis, el_yaw = Z axis
+        known_axes = {
+            'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
+            'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
+            'l_el_pitch': '-y',    # axis="0 1 0" (left arm bends)
+            'l_el_yaw': '-z',     # axis="0 0 -1" (left side)
+            'r_sho_pitch': '-y',  # axis="0 -1 0" in URDF (right side)
+            'r_sho_roll': 'x',    # axis="1 0 0"
+            'r_el_pitch': 'y',   # axis="0 -1 0"
+            'r_el_yaw': 'z',      # axis="0 0 1"
+        }
+        
+        params = {}
+        for i, joint_name in enumerate(joint_names):
+            joint_id = model.getJointId(joint_name)
+            placement = model.jointPlacements[joint_id]
+            translation = placement.translation.tolist()
+            
+            # Use known axes from URDF analysis
+            axis = known_axes.get(joint_name, get_axis_string(model, joint_id))
+            
+            params[f'T_{i}_{i+1}'] = (translation, axis)
+        
+        # Get gripper frame placement relative to last joint
+        if model.existFrame(gripper_frame):
+            gripper_frame_id = model.getFrameId(gripper_frame)
+            frame = model.frames[gripper_frame_id]
+            gripper_translation = frame.placement.translation.tolist()
+            params[f'T_{len(joint_names)}_wrist'] = (gripper_translation, 'non')
+        
+        return params
+    
+    def build_symbolic_fk_from_urdf(self, arm_side: str):
+        """
+        Build a symbolic CasADi forward kinematics function by extracting
+        parameters from the URDF model.
+        
+        Args:
+            arm_side: 'left' or 'right'
+        
+        Returns:
+            ca.Function: Symbolic FK function theta -> [x, y, z]
+        """
+        import casadi as ca
+        
+        params = self.extract_fk_params_from_urdf(arm_side)
+        
+        def _get_homogeneous_transform(xyz, axis, angle):
+            T = ca.SX.eye(4)
+            T[0:3, 3] = xyz
+            c = ca.cos(angle); s = ca.sin(angle)
+            match axis:
+                case 'x':  T[1,1]=c; T[1,2]=-s; T[2,1]= s; T[2,2]=c
+                case '-x': T[1,1]=c; T[1,2]= s; T[2,1]=-s; T[2,2]=c
+                case 'y':  T[0,0]=c; T[0,2]= s; T[2,0]=-s; T[2,2]=c
+                case '-y': T[0,0]=c; T[0,2]=-s; T[2,0]= s; T[2,2]=c
+                case 'z':  T[0,0]=c; T[0,1]=-s; T[1,0]= s; T[1,1]=c
+                case '-z': T[0,0]=c; T[0,1]= s; T[1,0]=-s; T[1,1]=c
+                case 'non': pass
+            return T
+        
+        n_joints = 4
+        theta = ca.SX.sym('theta', n_joints)
+        
+        T_total = ca.SX.eye(4)
+        for i in range(n_joints):
+            translation, axis = params[f'T_{i}_{i+1}']
+            T_i = _get_homogeneous_transform(translation, axis, theta[i])
+            T_total = ca.mtimes(T_total, T_i)
+        
+        # Add gripper offset (no rotation)
+        translation, _ = params[f'T_{n_joints}_wrist']
+        T_gripper = _get_homogeneous_transform(translation, 'non', 0)
+        T_total = ca.mtimes(T_total, T_gripper)
+        
+        p_gripper = T_total[0:3, 3]
+        
+        return ca.Function(f'fk_{arm_side}', [theta], [p_gripper])
+
+    # this should work aswell (T_world_sho_pitch)^-1 * T_world_wrist = T_sho_wrist 
+    # pinocchio can calculate the Transformation to the world frame form the urdf file 
+    def get_fk_shoulder_to_gripper(self, arm_side: str, q: np.ndarray = None) -> pin.SE3:
+        """
+        Compute forward kinematics from shoulder pitch frame to gripper frame.
+        
+        Args:
+            arm_side: 'left' or 'right'
+            q: Joint configuration (optional, uses current robot_model.q if None)
+        
+        Returns:
+            pin.SE3: Transform from shoulder pitch to gripper (T_sho_gripper)
+        """
+        model = self.robot_model.model
+        data = self.robot_model.data
+        
+        if q is None:
+            q = self.robot_model.q
+        
+        # Update forward kinematics with current/given configuration
+        pin.forwardKinematics(model, data, q)
+        pin.updateFramePlacements(model, data)
+        
+        # Get frame names based on arm side
+        if arm_side == 'left':
+            sho_pitch_frame = 'l_sho_pitch_link'
+            gripper_frame = 'l_gripper_link'
+        elif arm_side == 'right':
+            sho_pitch_frame = 'r_sho_pitch_link'
+            gripper_frame = 'r_gripper_link'
+        else:
+            raise ValueError("arm_side must be 'left' or 'right'")
+        
+        # Get frame IDs
+        sho_pitch_id = model.getFrameId(sho_pitch_frame)
+        gripper_id = model.getFrameId(gripper_frame)
+        
+        # Get world-frame transforms
+        T_world_sho = data.oMf[sho_pitch_id]      # World -> Shoulder Pitch
+        T_world_gripper = data.oMf[gripper_id]    # World -> Gripper
+        
+        # Compute relative transform: T_sho_gripper = T_world_sho^-1 * T_world_gripper
+        T_sho_gripper = T_world_sho.actInv(T_world_gripper)
+        
+        return T_sho_gripper
+    
+    def get_gripper_position_in_shoulder_frame(self, arm_side: str, q: np.ndarray = None) -> np.ndarray:
+        """
+        Get the gripper position (x, y, z) relative to shoulder pitch frame.
+        
+        Args:
+            arm_side: 'left' or 'right'
+            q: Joint configuration (optional)
+        
+        Returns:
+            np.ndarray: [x, y, z] position of gripper in shoulder frame
+        """
+        T_sho_gripper = self.get_fk_shoulder_to_gripper(arm_side, q)
+        return T_sho_gripper.translation.copy()
+    
+    def get_gripper_homogeneous_matrix(self, arm_side: str, q: np.ndarray = None) -> np.ndarray:
+        """
+        Get the 4x4 homogeneous transformation matrix from shoulder to gripper.
+        
+        Args:
+            arm_side: 'left' or 'right'
+            q: Joint configuration (optional)
+        
+        Returns:
+            np.ndarray: 4x4 homogeneous transformation matrix
+        """
+        T_sho_gripper = self.get_fk_shoulder_to_gripper(arm_side, q)
+        return T_sho_gripper.homogeneous
 
     def target_cb(self, msg: RobotImitationTargets):
         x_left = msg.wrist_target_left.x

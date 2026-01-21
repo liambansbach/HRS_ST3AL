@@ -80,71 +80,42 @@ class HumanToAinex(Node):
     def robot_wrist_target(self):
         """ 
             Calculates target position for robot wrist by mapping from humans full reach to robots full reach
-            Uses human direction from shoulder to wrist and a reaching factor [0-1] to determine robot wrist target
-            
-            3D coordinate mapping (MediaPipe image coords -> Robot coords):
-                robot.x = human.z (depth/forward)
-                robot.y = human.x (left/right)
-                robot.z = -human.y (up/down, inverted)
+            Uses human direction from shoulder to wrist and a reaching factor [0-1] to determine robot wrist target 
         """
 
         """ Left """
-        HRV_left = np.array([
-            self.left_wrist.x - self.left_shoulder.x,
-            self.left_wrist.y - self.left_shoulder.y,
-            self.left_wrist.z - self.left_shoulder.z
-        ])
+        HRV_left = np.array([self.left_wrist.x - self.left_shoulder.x, self.left_wrist.y - self.left_shoulder.y])
         HRV_left_len = np.linalg.norm(HRV_left)
         HRV_left_unit = HRV_left / HRV_left_len
 
-        HOA_left = np.array([
-            self.left_elbow.x - self.left_shoulder.x,
-            self.left_elbow.y - self.left_shoulder.y,
-            self.left_elbow.z - self.left_shoulder.z
-        ])
-        HUA_left = np.array([
-            self.left_wrist.x - self.left_elbow.x,
-            self.left_wrist.y - self.left_elbow.y,
-            self.left_wrist.z - self.left_elbow.z
-        ])
+        HOA_left = np.array([self.left_elbow.x - self.left_shoulder.x, self.left_elbow.y - self.left_shoulder.y])
+        HUA_left = np.array([self.left_wrist.x - self.left_elbow.x, self.left_wrist.y - self.left_elbow.y])
 
         reaching_factor_left = HRV_left_len / (np.linalg.norm(HOA_left) + np.linalg.norm(HUA_left))
 
         full_reach_reaching_direction_left = HRV_left_unit * self.robot_full_reach_length
         wtl = full_reach_reaching_direction_left * reaching_factor_left
         wrist_target_left = Point()
-        wrist_target_left.x = -wtl[2]   # depth (MediaPipe z -> Robot x)
-        wrist_target_left.y = wtl[0]   # left/right (MediaPipe x -> Robot y)
-        wrist_target_left.z = -wtl[1]  # up/down (MediaPipe -y -> Robot z)
+        wrist_target_left.x = 0.0
+        wrist_target_left.y = wtl[0]
+        wrist_target_left.z = -wtl[1]
 
         """ Right """
-        HRV_right = np.array([
-            self.right_wrist.x - self.right_shoulder.x,
-            self.right_wrist.y - self.right_shoulder.y,
-            self.right_wrist.z - self.right_shoulder.z
-        ])
+        HRV_right = np.array([self.right_wrist.x - self.right_shoulder.x, self.right_wrist.y - self.right_shoulder.y])
         HRV_right_len = np.linalg.norm(HRV_right)
         HRV_right_unit = HRV_right / HRV_right_len
 
-        HOA_right = np.array([
-            self.right_elbow.x - self.right_shoulder.x,
-            self.right_elbow.y - self.right_shoulder.y,
-            self.right_elbow.z - self.right_shoulder.z
-        ])
-        HUA_right = np.array([
-            self.right_wrist.x - self.right_elbow.x,
-            self.right_wrist.y - self.right_elbow.y,
-            self.right_wrist.z - self.right_elbow.z
-        ])
+        HOA_right = np.array([self.right_elbow.x - self.right_shoulder.x, self.right_elbow.y - self.right_shoulder.y])
+        HUA_right = np.array([self.right_wrist.x - self.right_elbow.x, self.right_wrist.y - self.right_elbow.y])
 
         reaching_factor_right = HRV_right_len / (np.linalg.norm(HOA_right) + np.linalg.norm(HUA_right))
 
         full_reach_reaching_direction_right = HRV_right_unit * self.robot_full_reach_length
         wtr = full_reach_reaching_direction_right * reaching_factor_right
         wrist_target_right = Point()
-        wrist_target_right.x = -wtr[2]   # depth (MediaPipe z -> Robot x)
-        wrist_target_right.y = wtr[0]   # left/right (MediaPipe x -> Robot y)
-        wrist_target_right.z = -wtr[1]  # up/down (MediaPipe -y -> Robot z)
+        wrist_target_right.x = 0.0
+        wrist_target_right.y = wtr[0]
+        wrist_target_right.z = -wtr[1]
 
         return wrist_target_left, wrist_target_right
 
@@ -202,10 +173,10 @@ class HumanToAinex(Node):
         t_msg.header.stamp = self.get_clock().now().to_msg()
         match side:
             case "left":
-                t_msg.header.frame_id = "l_sho_pitch_link"
+                t_msg.header.frame_id = "base_link"
                 t_msg.child_frame_id = "wrist_left_target_rviz"
             case "right": 
-                t_msg.header.frame_id = "r_sho_pitch_link"
+                t_msg.header.frame_id = "base_link"
                 t_msg.child_frame_id = "wrist_right_target_rviz"
 
 
