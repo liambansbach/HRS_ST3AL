@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
-TUM - ICS AiNex CameraSubscriberCompressed Demo for ROS 2 Jazzy
-----------------------------------------
-Subscribes to compressed camera images and camera info,
-Requires:
-  sudo apt install python3-numpy python3-opencv
+ROS 2 Camera Subscriber (CompressedImage -> undistorted Image publisher)
 
-Msgs:
-    sensor_msgs/CompressedImage
-    sensor_msgs/CameraInfo
+This node subscribes to:
+  - sensor_msgs/CompressedImage on `camera_image/compressed`
+  - sensor_msgs/CameraInfo on `camera_info`
 
+It loads a camera calibration YAML (intrinsics + distortion coefficients),
+undistorts incoming compressed frames using OpenCV, publishes the undistorted
+result as `sensor_msgs/Image` on `camera_image/undistorted`, and optionally
+displays the undistorted stream in an OpenCV window.
+
+Key bindings (OpenCV window):
+  - 'q': quit
+  - 'c': toggles an internal flag (kept for compatibility; display remains undistorted)
+
+Notes:
+  - QoS is BEST_EFFORT with depth=1 for sensor-style topics.
+  - If calibration cannot be loaded, frames are forwarded without undistortion.
 
 Group B:
     Liam Bansbach
@@ -18,24 +26,46 @@ Group B:
     Tobias Töws
     Maalon Jochmann
 """
+
 from pathlib import Path
 
-import numpy as np
 import cv2
-from cv_bridge import CvBridge
+import numpy as np
+import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_directory
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import CompressedImage, CameraInfo, Image
+from cv_bridge import CvBridge
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image
+
 
 class CameraSubscriber(Node):
-    def __init__(self):
-        super().__init__('camera_sub')
+    """
+    Subscribe to compressed camera images, undistort them, publish as Image, and optionally display.
+
+    Responsibilities:
+      - Declare and read a `calibration_file` parameter (defaults to vision/config/calibration.yaml)
+      - Load camera intrinsics/distortion from YAML
+      - Subscribe to `camera_image/compressed` and `camera_info`
+      - Undistort frames (if calibration is available) and publish `camera_image/undistorted`
+      - Provide an OpenCV display loop with basic key handling
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the ROS 2 node, parameters, calibration, subscribers, and publisher.
+
+        This constructor keeps the original behavior intact:
+          - BEST_EFFORT QoS with depth=1
+          - Loads calibration YAML from a parameter
+          - Subscribes to compressed images and camera info
+          - Publishes undistorted images as `sensor_msgs/Image`
+        """
+        super().__init__("camera_sub")
         self.cwd = Path.cwd()
-        
+
         self.frame = None
         self.camera_k = None
         self.camera_d = None
@@ -47,7 +77,7 @@ class CameraSubscriber(Node):
 
         self.cb_group = ReentrantCallbackGroup()
 
-        # QoS: Reliable to ensure camera_info is received
+        # QoS: BEST_EFFORT with depth=1 for typical sensor topics
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -55,13 +85,15 @@ class CameraSubscriber(Node):
         )
 
         # Load calibration file parameter
-        pkg_share = Path(get_package_share_directory('vision'))
-        default_calib = pkg_share / 'config' / 'calibration.yaml'
-        self.declare_parameter('calibration_file', str(default_calib))
-        calib_file = self.get_parameter('calibration_file').get_parameter_value().string_value
-        self.get_logger().info(f"Using calibration file: {calib_file}") 
+        pkg_share = Path(get_package_share_directory("vision"))
+        default_calib = pkg_share / "config" / "calibration.yaml"
+        self.declare_parameter("calibration_file", str(default_calib))
+        calib_file = (
+            self.get_parameter("calibration_file").get_parameter_value().string_value
+        )
+        self.get_logger().info(f"Using calibration file: {calib_file}")
 
-        # Bridge for CompressedImage -> OpenCV
+        # Bridge for CompressedImage -> OpenCV and OpenCV -> Image
         self.bridge = CvBridge()
 
         # Load camera calibration
@@ -76,43 +108,47 @@ class CameraSubscriber(Node):
         # Subscribe compressed images
         self.sub_compressed = self.create_subscription(
             CompressedImage,
-            'camera_image/compressed',
+            "camera_image/compressed",
             self.image_callback_compressed,
             sensor_qos,
             callback_group=self.cb_group,
         )
-        self.sub_compressed
+        self.sub_compressed  # keep reference
 
         # Subscribe camera info
         self.sub_camerainfo = self.create_subscription(
             CameraInfo,
-            'camera_info',
+            "camera_info",
             self.camera_info_callback,
             sensor_qos,
-            callback_group=self.cb_group
+            callback_group=self.cb_group,
         )
-        self.sub_camerainfo
+        self.sub_camerainfo  # keep reference
 
-        self.camera_undist_pub = self.create_publisher(Image, "camera_image/undistorted", 10)
+        # Publish undistorted image as raw Image
+        self.camera_undist_pub = self.create_publisher(
+            Image, "camera_image/undistorted", 10
+        )
 
+    def camera_info_callback(self, msg: CameraInfo) -> None:
+        """
+        Handle incoming `sensor_msgs/CameraInfo`.
 
-    def camera_info_callback(self, msg: CameraInfo):
-        '''
-        Docstring for camera_info_callback
-        
-        :param self: Description
-        :param msg: Description
-        :type msg: CameraInfo
-        '''
+        Logs camera resolution and calibration parameters once (on first receipt),
+        and stores the info into instance attributes for later reference.
+
+        Args:
+            msg: Incoming CameraInfo message containing width/height and calibration data.
+        """
         if not self.camera_info_received:
             self.get_logger().info(
-                f'Camera Info received: {msg.width}x{msg.height}\n'
-                f'K: {msg.k}\n'
-                f'D: {msg.d}'
+                f"Camera Info received: {msg.width}x{msg.height}\n"
+                f"K: {msg.k}\n"
+                f"D: {msg.d}"
             )
-            print(f'Camera Info received: {msg.width}x{msg.height}')
-            print(f'Intrinsic matrix K: {msg.k}')
-            print(f'Distortion coeffs D: {msg.d}')
+            print(f"Camera Info received: {msg.width}x{msg.height}")
+            print(f"Intrinsic matrix K: {msg.k}")
+            print(f"Distortion coeffs D: {msg.d}")
             self.camera_info_received = True
 
             self.camera_k = msg.k
@@ -122,7 +158,20 @@ class CameraSubscriber(Node):
 
     def _load_calibration(self, calib_path: str):
         """
-        Load camera_matrix and distortion_coefficients from a YAML file.
+        Load camera intrinsics (K) and distortion coefficients (D) from a YAML file.
+
+        The YAML is expected to contain:
+          - `camera_matrix`: a 3x3 nested list (or list-like) describing the intrinsic matrix.
+          - `distortion_coefficients`: list-like describing distortion parameters.
+
+        Args:
+            calib_path: Path to the calibration YAML file.
+
+        Returns:
+            (K, D) where:
+              - K is a (3, 3) float32 numpy array
+              - D is a (N,) float32 numpy array (raveled)
+            If loading fails, returns (None, None).
         """
         calib_path = Path(calib_path)
         if not calib_path.is_file():
@@ -130,7 +179,7 @@ class CameraSubscriber(Node):
             return None, None
 
         try:
-            with calib_path.open('r') as f:
+            with calib_path.open("r") as f:
                 calib = yaml.safe_load(f)
         except Exception as e:
             self.get_logger().error(f"Failed to read calibration file: {e}")
@@ -138,9 +187,9 @@ class CameraSubscriber(Node):
 
         try:
             # camera_matrix: list of 3 lists (3x3)
-            K_list = calib['camera_matrix']
+            K_list = calib["camera_matrix"]
             # distortion_coefficients: list with one list inside
-            D_list = calib['distortion_coefficients']
+            D_list = calib["distortion_coefficients"]
             K = np.array(K_list, dtype=np.float32).reshape(3, 3)
             D = np.array(D_list, dtype=np.float32).ravel()
         except KeyError as e:
@@ -150,18 +199,22 @@ class CameraSubscriber(Node):
         self.get_logger().info("Loaded camera calibration.")
         return K, D
 
+    def image_callback_compressed(self, msg: CompressedImage) -> None:
+        """
+        Handle incoming `sensor_msgs/CompressedImage`.
 
-    def image_callback_compressed(self, msg: CompressedImage):
-        '''
-        Docstring for image_callback_compressed
-        
-        :param self: Description
-        :param msg: Description
-        :type msg: CompressedImage
-        '''
+        Converts the compressed image into an OpenCV BGR frame, undistorts it if
+        calibration is available, stores it for display, then converts it back
+        into a ROS `sensor_msgs/Image` and publishes on `camera_image/undistorted`.
+
+        Args:
+            msg: Incoming compressed image message.
+        """
         # Convert compressed image to OpenCV BGR
         try:
-            frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            frame = self.bridge.compressed_imgmsg_to_cv2(
+                msg, desired_encoding="bgr8"
+            )
         except Exception as e:
             self.get_logger().warn(f"Failed to convert image: {e}")
             return
@@ -169,7 +222,6 @@ class CameraSubscriber(Node):
         # Undistort if calibration is available
         if self.camera_matrix is not None and self.dist_coeffs is not None:
             self.frame = cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
-
         else:
             self.frame = frame
 
@@ -177,32 +229,48 @@ class CameraSubscriber(Node):
         self.undist = self.frame
 
         # Convert to ROS Image and publish
-        img_msg = self.bridge.cv2_to_imgmsg(self.frame, encoding='bgr8')
-        img_msg.header = msg.header          # keep timestamp/frame_id from incoming image
+        img_msg = self.bridge.cv2_to_imgmsg(self.frame, encoding="bgr8")
+        img_msg.header = msg.header  # keep timestamp/frame_id from incoming image
         self.camera_undist_pub.publish(img_msg)
 
-    def process_key(self):
-        '''
-        
-        '''
+    def process_key(self) -> bool:
+        """
+        Process keyboard input from the OpenCV window.
+
+        Behavior:
+          - 'q' quits the display loop
+          - 'c' sets an internal `show_compressed` flag and logs (kept as-is)
+
+        Returns:
+            False to stop the display loop, True to continue.
+        """
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        if key == ord("q"):
             return False  # Quit
-        if key == ord('c'):
+        if key == ord("c"):
             self.show_compressed = True
-            self.get_logger().info('Switched to compressed image')
+            self.get_logger().info("Switched to compressed image")
         return True
 
+    def display_loop(self) -> None:
+        """
+        Run an interactive display loop that shows the latest undistorted frame.
 
-    def display_loop(self):
-        '''
-        
-        '''
+        The loop:
+          - Displays `self.undist` when available
+          - Checks for key presses via `process_key()`
+          - Calls `rclpy.spin_once()` to service callbacks
+
+        Exits when:
+          - ROS shuts down, or
+          - User presses 'q'
+        """
         while rclpy.ok():
             if self.frame is not None:
-                # Display the compressed image 
-                cv2.imshow('Camera Compressed undistorted', self.undist)
-                #input("press key to continue...")
+                # Display the compressed image (undistorted)
+                cv2.imshow("Camera Compressed undistorted", self.undist)
+                # input("press key to continue...")
+
             if not self.process_key():
                 break
 
@@ -210,14 +278,16 @@ class CameraSubscriber(Node):
 
         cv2.destroyAllWindows()
 
-def main():
+
+def main() -> None:
+
     rclpy.init()
     node = CameraSubscriber()
-    node.get_logger().info('CameraSubscriber node started')
+    node.get_logger().info("CameraSubscriber node started")
 
     try:
         # NOT Visualize Display
-        #rclpy.spin(node)
+        # rclpy.spin(node)
         # Visualize Display
         node.display_loop()
     except KeyboardInterrupt:
@@ -228,5 +298,5 @@ def main():
             rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

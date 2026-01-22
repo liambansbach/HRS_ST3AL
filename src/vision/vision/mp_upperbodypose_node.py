@@ -1,34 +1,64 @@
 #!/usr/bin/env python3
-'''
-Docstring for camera.camera.mp_pose
-'''
+"""
+ROS 2 MediaPipe Pose Node
+
+This node subscribes to undistorted camera images and runs MediaPipe's pose landmarker
+to estimate an upper-body rig (shoulders, elbows, wrists, pinky, index for left/right).
+
+Inputs:
+  - sensor_msgs/Image on `camera_image/undistorted`
+
+Outputs:
+  - ainex_interfaces/UpperbodyPose on `/mp_pose/upper_body_rig`
+
+Visualization:
+  - Shows an annotated OpenCV window ("POSE") with a lightweight upper-body skeleton.
+
+Notes:
+  - The callback is rate-limited to ~30 Hz using `time.monotonic_ns()`.
+  - Uses MediaPipe Tasks PoseLandmarker in IMAGE mode (per-frame detection).
+  - Publishes only when both shoulders have sufficient visibility (> 0.3).
+"""
 
 import os
 from pathlib import Path
 import time
+import traceback
 
 import cv2
 import numpy as np
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from cv_bridge import CvBridge
 from ament_index_python.packages import get_package_share_directory
-
-import mediapipe as mp
+from cv_bridge import CvBridge
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-
-from sensor_msgs.msg import Image
+import mediapipe as mp
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
-from ainex_interfaces.msg import UpperbodyPose
+from sensor_msgs.msg import Image
 
-import traceback
+from ainex_interfaces.msg import UpperbodyPose
 
 
 class MPPose(Node):
-    def __init__(self):
-        super().__init__('mp_pose')
+    """
+    MediaPipe Pose wrapper node.
+
+    Subscribes to `camera_image/undistorted`, runs pose detection, publishes a compact
+    `UpperbodyPose` message for upper-body joints, and renders an annotated image.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize subscriptions, publishers, MediaPipe detector, and visualization.
+
+        This constructor keeps the original behavior intact:
+          - BEST_EFFORT QoS (depth=1)
+          - MediaPipe PoseLandmarker in IMAGE mode
+          - OpenCV window creation and window thread startup
+        """
+        super().__init__("mp_pose")
 
         self.bridge = CvBridge()
         self.frame = None
@@ -37,50 +67,46 @@ class MPPose(Node):
         self._run_period_ns = int(1e9 / 30)  # 30 Hz
         self._cb_count = 0
 
-        # QoS: Reliable to ensure camera_info is received
+        # QoS: BEST_EFFORT with depth=1 for typical sensor topics
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
 
-        '''
-        RIG JOINT NAMES:
-        - left shoulder == 11
-        - right shoulder == 12
-        - left elbow == 13
-        - right elbow == 14
-        - left wrist == 15
-        - right wrist == 16
-        - left pinky == 17
-        - right pinky == 18
-        - left index == 19
-        - right index == 20
-        '''
-
+        # RIG JOINT NAMES:
+        # - left shoulder == 11
+        # - right shoulder == 12
+        # - left elbow == 13
+        # - right elbow == 14
+        # - left wrist == 15
+        # - right wrist == 16
+        # - left pinky == 17
+        # - right pinky == 18
+        # - left index == 19
+        # - right index == 20
         self.POSE_CONNECTIONS = [
             (18, 20), (18, 16), (20, 16), (16, 14), (14, 12),
             (12, 11),
-            (11, 13), (13, 15), (15, 19), (15, 17), (17, 19)
+            (11, 13), (13, 15), (15, 19), (15, 17), (17, 19),
         ]
 
-        # Path to Landmark model
-        """ project_root = Path(__file__).resolve().parents[3]
-        model_path = project_root / "models" / "pose_landmarker_lite.task" """
-
-        package_share_directory = get_package_share_directory('vision')
-        model_path = Path(os.path.join(package_share_directory, 'models', 'pose_landmarker_lite.task'))
+        # Path to Landmark model (from package share)
+        package_share_directory = get_package_share_directory("vision")
+        model_path = Path(
+            os.path.join(package_share_directory, "models", "pose_landmarker_lite.task")
+        )
 
         base_options = python.BaseOptions(model_asset_path=str(model_path))
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.IMAGE,  # CHANGED: VIDEO -> IMAGE
-            num_poses=1
+            num_poses=1,
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
 
         cv2.namedWindow("POSE", cv2.WINDOW_NORMAL)
-        cv2.startWindowThread()  
+        cv2.startWindowThread()
 
         if not model_path.exists():
             self.get_logger().error(f"Pose model not found: {model_path}")
@@ -91,18 +117,33 @@ class MPPose(Node):
             Image,
             "camera_image/undistorted",
             self.image_callback,
-            sensor_qos
+            sensor_qos,
         )
 
         self.rig_pub = self.create_publisher(
             UpperbodyPose,
             "/mp_pose/upper_body_rig",
-            10
+            10,
         )
 
-        self.get_logger().info('Pose Recognition Node started! Listening to /image_raw/')
+        self.get_logger().info(
+            "Pose Recognition Node started! Listening to /image_raw/"
+        )
 
-    def image_callback(self, msg: Image):
+    def image_callback(self, msg: Image) -> None:
+        """
+        Run pose estimation on incoming frames (rate-limited) and publish an upper-body rig.
+
+        Pipeline:
+          1) Rate-limit to ~30 Hz using monotonic time.
+          2) Convert ROS Image -> OpenCV BGR -> RGB contiguous array.
+          3) Run MediaPipe PoseLandmarker detection.
+          4) If landmarks exist, populate and publish `UpperbodyPose` (when shoulders visible).
+          5) Draw landmarks and show in the "POSE" OpenCV window.
+
+        Args:
+            msg: Incoming `sensor_msgs/Image` (expected BGR8 encoding).
+        """
         cv2.waitKey(1)
 
         now_ns = time.monotonic_ns()
@@ -117,7 +158,7 @@ class MPPose(Node):
             self.get_logger().info("image_callback alive")
 
         try:
-            frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             frame_rgb = np.ascontiguousarray(frame_rgb)
@@ -169,6 +210,20 @@ class MPPose(Node):
             return
 
     def draw_landmarks_on_image(self, rgb_image: np.ndarray, result) -> np.ndarray:
+        """
+        Draw pose landmarks and a custom upper-body skeleton on an RGB image.
+
+        Landmarks are drawn only when their visibility is >= 0.5. Connections are
+        defined by `self.POSE_CONNECTIONS` and drawn in white; visible keypoints
+        are drawn as small green circles.
+
+        Args:
+            rgb_image: Input RGB image as a numpy array.
+            result: MediaPipe PoseLandmarker result containing `pose_landmarks`.
+
+        Returns:
+            A copy of the input RGB image annotated with landmarks and connections.
+        """
         annotated = rgb_image.copy()
         h, w = annotated.shape[:2]
 
