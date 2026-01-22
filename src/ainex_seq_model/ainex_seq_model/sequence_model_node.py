@@ -15,6 +15,11 @@ manipulation sequence.
 
 Subscribes to CubeBBoxList messages on /cubes_position
 
+---conversion node
+TODO: Change Cube Detection (Stabelize + Use Only Center)
+TODO: Project Center into 3D Workspace coordinates
+
+---this node
 TODO: Get reliable World State Updates (better bag needed)
 TODO: Publishing
 =======
@@ -254,7 +259,6 @@ class SequenceModel(Node):
             #self.get_logger().info(
             #    "history sizes: " + ", ".join([f"{cid}={len(self.histories[cid])}" for cid in self.cube_ids])
             #)
-
 
 
     def _update_motion_estimates(self) -> None:
