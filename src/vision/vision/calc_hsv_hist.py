@@ -6,23 +6,46 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+current_directory = Path.cwd()
+
+# rois = {
+#     "green":(
+#         [56, 37],
+#         [128, 37],
+#         [128, 138],
+#         [56, 138]),
+#     "red": (
+#         [212, 40],
+#         [275, 40],
+#         [275, 130],
+#         [212, 130],
+#     ),
+#     "blue": (
+#         [350, 35],
+#         [410, 35],
+#         [410, 130],
+#         [350, 130],
+#     )
+# }
+
+# only front FACE
 rois = {
     "green":(
-        [56, 37],
-        [128, 37],
-        [128, 138],
-        [56, 138]),
+        [55, 80],
+        [125, 80],
+        [125, 140],
+        [55, 140]),
     "red": (
-        [212, 40],
-        [275, 40],
-        [275, 130],
-        [212, 130],
+        [205, 80],
+        [283, 80],
+        [283, 142],
+        [205, 142],
     ),
     "blue": (
-        [350, 35],
-        [410, 35],
-        [410, 130],
-        [350, 130],
+        [343, 79],
+        [422, 79],
+        [422, 135],
+        [343, 135],
     )
 }
 
@@ -84,19 +107,20 @@ def comput_hist(roi_dict, img, save=False):
         cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
 
         if save:
-            out = f"/home/maalonjochmann/HRS_ST3AL/src/vision/vision/maalon/hist_{color}.npy"
+            out = Path.joinpath(current_directory, f"src/vision/vision/maalon/hist_{color}_front-face.npy") 
             np.save(out, hist)
-            print(f"Gespeichert: hist_{color}.npy")
+            print(f"Gespeichert: hist_{color}_front-face.npy")
 
         print("save?", save)
 
 def main():
     """Run an interactive ROI preview and export histograms from a fixed reference image."""
-    path = "/home/maalonjochmann/HRS_ST3AL/imgs/hsv_reference.jpg"      # TODO adapt path
-    img = load_img(path)
+    path = Path.joinpath(current_directory, "imgs/hsv_reference.jpg")     # TODO adapt path
+    print("Loading image from:", path)
+    img = load_img(str(path))
     show_img(img)
 
-    # show_cropped_polygon_roi(img=img, roi_pts=rois["green"])
+    show_cropped_polygon_roi(img=img, roi_pts=rois["green"])
     show_cropped_polygon_roi(img=img, roi_pts=rois["blue"])
     show_cropped_polygon_roi(img=img, roi_pts=rois["red"])
     comput_hist(rois, img, save=True)

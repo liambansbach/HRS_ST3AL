@@ -36,23 +36,23 @@ class CubeDetector(Node):
         self.frame = None
 
         # Histogram paths
-        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_red.npy")
-        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_green.npy")
-        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_blue.npy")
+        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_red_front-face.npy")
+        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_green_front-face.npy")
+        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_blue_front-face.npy")
 
         # --- [TUNE] global parameters ---
         self.min_blob_area = 250
-        self.conf_thresh = 8.0           # min mean bp in bbox to accept
-        self.square_scale = 0.93          # padding scale for square bbox
+        self.conf_thresh = 10.0           # min mean bp in bbox to accept
+        self.square_scale = 0.95          # padding scale for square bbox
         self.ema_alpha = 0.2             # smoothing strength (higher = more responsive)
-        self.roi_search_scale = 1.63       # search region size around last_window (multiplier)
+        self.roi_search_scale = 1.5      # search region size around last_window (multiplier)
         self.keep_last_on_fail = True     # publish last_window even if lost this frame
 
-        self.bp_tight_thr = 30              # [TUNE] 60..120 tighter bbox threshold
+        self.bp_tight_thr = 40              # [TUNE] 60..120 tighter bbox threshold
         self.jump_center_px = 100           # [TUNE] max center jump allowed before reset
         self.jump_area_ratio = 3.5          # [TUNE] if area changes too much -> reset
 
-        # Optical flow parameters
+        # Optical flow parameterscd 
         self.flow_min_pts = 25
         self.feature_params = dict(maxCorners=200, qualityLevel=0.01, minDistance=5, blockSize=7)
         self.lk_params = dict(
@@ -147,14 +147,14 @@ class CubeDetector(Node):
         h, s, v = cv2.split(hsv)
 
         # [TUNE] mask to suppress gray/dark pixels
-        mask_sv = cv2.inRange(hsv, (0, 30, 60), (179, 255, 255))
+        mask_sv = cv2.inRange(hsv, (0, 40, 50), (179, 255, 230))
 
         bp = cv2.calcBackProject([h], [0], hist, [0, 180], 1)
         bp = cv2.GaussianBlur(bp, (5, 5), 0)  # [TUNE]
         bp = cv2.bitwise_and(bp, bp, mask=mask_sv)
 
         # [TUNE] remove low responses
-        _, bp = cv2.threshold(bp, 50, 255, cv2.THRESH_TOZERO)
+        _, bp = cv2.threshold(bp, 40, 255, cv2.THRESH_TOZERO)
         return bp
 
     def find_biggest_blob(self, bp, min_area=300):
