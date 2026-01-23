@@ -55,8 +55,8 @@ class AiNexModel:
         self.x_left = self.data.oMf[self.left_hand_id].copy() # ref docu: Vector of absolute operationnel frame placements (wrt the world). 
         self.x_right = self.data.oMf[self.right_hand_id].copy() # Essentially this is the end-effector frame placement with respect to the base-link (com?)
 
-        self.broadcast_tf("left") # Broadcaster for left hand
-        self.broadcast_tf("right") # Broadcaster for right hand
+        #self.broadcast_tf("left") # Broadcaster for left hand
+        #self.broadcast_tf("right") # Broadcaster for right hand
 
     def broadcast_tf(self, hand: str):
         t = TransformStamped()
@@ -66,7 +66,7 @@ class AiNexModel:
         match hand:
             case "left":
                 chosen_hand = self.x_left
-                t.header.frame_id = "l_sho_pitch"
+                t.header.frame_id = "l_sho_pitch"    
             case "right":
                 chosen_hand = self.x_right
                 t.header.frame_id = "r_sho_pitch"

@@ -26,7 +26,7 @@ The **MediaPipe** library does not come packaged with ROS2 and need to be instal
 2.  **Install MediaPipe:**
     With the virtual environment active, install the required libraries:
     ```bash
-    pip install mediapipe pin casadi
+    pip install mediapipe pin casadi "numpy<2"
     ```
 
 3.  **Build the Workspace:**

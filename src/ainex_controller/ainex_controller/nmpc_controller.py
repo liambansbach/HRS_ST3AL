@@ -10,9 +10,9 @@ class NMPC:
             N = 20,
             
             n_joints = 4,
-            n_ref_vals = 3,
+            n_ref_vals = 4,
             
-            Q_diag = [100.0, 100.0, 10.0],
+            Q_diag = [100.0, 100.0, 100.0, 10.0],
             R_diag = [0.1, 0.1, 0.1, 0.1],
             
             theta_dot_max = 2.0,  
@@ -49,7 +49,7 @@ class NMPC:
         self.dt = T_HORIZON_s / N           # Time step (delta t)
 
         self.n_joints = n_joints            # 0: Shoulder Pitch, 1: Shoulder Roll, 2: Elbow Pitch, 3: Elbow Yaw
-        self.n_ref_vals = n_ref_vals  # 0: x, 1: y
+        self.n_ref_vals = n_ref_vals  # 0: x, 1: y, 2: z, 3: theta_elbow
 
         # Weight Matrices for tuning optimization
         self.Q_diag = Q_diag                #[x, y, theta_elbow]
@@ -162,8 +162,8 @@ class NMPC:
         # Total Chain: Shoulder -> Wrist
         T_shoulder_wrist = ca.mtimes([T_0_1, T_1_2, T_2_3, T_3_4, T_4_wrist])
 
-        # Extract Position (x, y)
-        p_wrist = T_shoulder_wrist[0:2, 3]
+        # Extract Position (x, y, z)
+        p_wrist = T_shoulder_wrist[0:(self.n_ref_vals-1), 3]
 
         self.forward_kinematics_wrist = ca.Function('forward_kinematics_wrist', [theta], [p_wrist])
 
@@ -176,7 +176,7 @@ class NMPC:
 
         """ Parameters """
         self.Theta_0 = self.opti.parameter(self.n_joints)        # Initial Joint Configuration
-        self.s_ref = self.opti.parameter(self.n_ref_vals)     # Reference Trajectory for States s = [x, y, theta_elbow]
+        self.s_ref = self.opti.parameter(self.n_ref_vals)     # Reference Trajectory for States s = [x, y, z, theta_elbow]
 
         """ Objective Function """
         cost = 0
@@ -185,9 +185,9 @@ class NMPC:
 
         for k in range(self.N):
             """ Calculate current State """                 
-            s_k  = ca.vertcat(                                   # s_k = [x_wrist, y_wrist, theta_elbow]
+            s_k  = ca.vertcat(                                   # s_k = [x_wrist, y_wrist, z_wrist, theta_elbow]
                 self.forward_kinematics_wrist(self.Theta[:, k]), 
-                self.Theta[2, k]
+                self.Theta[(self.n_joints-1), k]
                 )                                
             
             e_k = s_k - self.s_ref                               # Error
@@ -197,7 +197,7 @@ class NMPC:
 
         s_N  = ca.vertcat(
             self.forward_kinematics_wrist(self.Theta[:, self.N]), 
-            self.Theta[2, self.N]
+            self.Theta[(self.n_joints-1), self.N]
             )
         e_N  = s_N - self.s_ref
         cost += 0.5 * ca.mtimes([e_N.T, self.Q, e_N])            # Terminal cost

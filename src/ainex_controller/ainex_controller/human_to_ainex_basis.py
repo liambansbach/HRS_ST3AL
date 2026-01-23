@@ -14,12 +14,19 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, TransformStamped
+from tf2_ros import TransformBroadcaster
+
 from ainex_interfaces.msg import UpperbodyPose, RobotImitationTargets
+
+
+
 
 class HumanToAinex(Node):
     def __init__(self):
         super().__init__('human_to_ainex')
+
+        self.br = TransformBroadcaster(self)
 
         self.bodypose_sub = self.create_subscription(
             UpperbodyPose,
@@ -34,8 +41,7 @@ class HumanToAinex(Node):
             10
         )
 
-        self.robot_full_reach_length = 0.02+0.02+0.1702+0.019 # NOTE: FIND REAL VALUE !!!
-
+        self.robot_full_reach_length = 0.187 
         self.get_logger().info('Human to Robot basis tranformation node started! Listening to "/mp_pose/upper_body_rig"')
 
     def bodypose_cb(self, msg: UpperbodyPose):
@@ -50,7 +56,6 @@ class HumanToAinex(Node):
         self.right_shoulder = msg.right_shoulder 
         self.right_elbow = msg.right_elbow   
         self.right_wrist = msg.right_wrist   
-
         self.publish_robot_targets()
 
     def publish_robot_targets(self):
@@ -61,6 +66,9 @@ class HumanToAinex(Node):
         angle_left_elbow, angle_right_elbow = self.robot_elbow_angle_target()
         
         msg = RobotImitationTargets()
+
+        self.visualize_targets(wrist_target_left, "left")
+        self.visualize_targets(wrist_target_right, "right")
 
         msg.wrist_target_left = wrist_target_left
         msg.wrist_target_right = wrist_target_right
@@ -88,8 +96,9 @@ class HumanToAinex(Node):
         full_reach_reaching_direction_left = HRV_left_unit * self.robot_full_reach_length
         wtl = full_reach_reaching_direction_left * reaching_factor_left
         wrist_target_left = Point()
-        wrist_target_left.x = wtl[0]
-        wrist_target_left.y = wtl[1]
+        wrist_target_left.x = 0.0
+        wrist_target_left.y = wtl[0]
+        wrist_target_left.z = -wtl[1]
 
         """ Right """
         HRV_right = np.array([self.right_wrist.x - self.right_shoulder.x, self.right_wrist.y - self.right_shoulder.y])
@@ -104,8 +113,9 @@ class HumanToAinex(Node):
         full_reach_reaching_direction_right = HRV_right_unit * self.robot_full_reach_length
         wtr = full_reach_reaching_direction_right * reaching_factor_right
         wrist_target_right = Point()
-        wrist_target_right.x = wtr[0]
-        wrist_target_right.y = wtr[1]
+        wrist_target_right.x = 0.0
+        wrist_target_right.y = wtr[0]
+        wrist_target_right.z = -wtr[1]
 
         return wrist_target_left, wrist_target_right
 
@@ -132,7 +142,61 @@ class HumanToAinex(Node):
         angle_right_elbow = np.arccos(np.dot(HOA_right, HUA_right) / (HOA_len_right * HUA_len_right))
 
         return angle_left_elbow, angle_right_elbow
-        
+    
+    def visualize_targets(self, xyz, side):
+        """ 
+            Visualizes the detected wrist positions and elbow angles in TF
+        """
+        """ # Nimm den ersten Marker (falls du mehrere willst, musst du hier erweitern)
+        tvec = self.tvecs.astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
+        rvec = self.rvecs.astype(float)
+        # === Low-pass Filter auf Translation ===
+        if self.last_tvec is None:
+            tvec_f = tvec
+        else:
+            tvec_f = self.alpha_pos * tvec + (1.0 - self.alpha_pos) * self.last_tvec
+        self.last_tvec = tvec_f
+
+        # === Low-pass Filter auf Rotation (auf rvec) ===
+        if self.last_rvec is None:
+            rvec_f = rvec
+        else:
+            rvec_f = self.alpha_rot * rvec + (1.0 - self.alpha_rot) * self.last_rvec
+        self.last_rvec = rvec_f """
+
+        # === Koordinatensystem-Anpassung ===
+        tx = xyz.x
+        ty = xyz.y
+        tz = xyz.z
+
+        t_msg = TransformStamped()
+        t_msg.header.stamp = self.get_clock().now().to_msg()
+        match side:
+            case "left":
+                t_msg.header.frame_id = "base_link"
+                t_msg.child_frame_id = "wrist_left_target_rviz"
+            case "right": 
+                t_msg.header.frame_id = "base_link"
+                t_msg.child_frame_id = "wrist_right_target_rviz"
+
+
+        t_msg.transform.translation.x = float(tx)    # vor der Kamera
+        t_msg.transform.translation.y = float(ty)   # links/rechts
+        t_msg.transform.translation.z = float(tz)   # hoch/runter
+
+        # Rotation aus gefiltertem rvec
+        #R_cv, _ = cv2.Rodrigues(rvec_f_i)
+        #r = R.from_matrix(R_cv)
+        qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0 # r.as_quat()  # [x, y, z, w]
+
+        t_msg.transform.rotation.x = float(qx)
+        t_msg.transform.rotation.y = float(qy)
+        t_msg.transform.rotation.z = float(qz)
+        t_msg.transform.rotation.w = float(qw)
+
+        # TF senden
+        self.br.sendTransform(t_msg)
+    
 def main(args=None):
     rclpy.init(args=args)
     node = HumanToAinex()

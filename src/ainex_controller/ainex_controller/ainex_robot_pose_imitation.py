@@ -5,6 +5,11 @@ from rclpy.node import Node
 from ainex_motion.joint_controller import JointController
 from sensor_msgs.msg import JointState
 
+"""
+Important NOTE:
+Seems like in here the left and right arms are swapped
+"""
+
 class AinexRobot():
     def __init__(self, node: Node, model: AiNexModel, dt: float, sim: bool = True):
         """ Visualize simulation and interface with real robot"""
@@ -113,3 +118,11 @@ class AinexRobot():
 
         return q_real
    
+    def publish_joint_states(self):
+        """Publish current joint states."""
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.node.get_clock().now().to_msg()
+        joint_state_msg.name = self.joint_names
+        joint_state_msg.position = self.q.tolist()
+        joint_state_msg.velocity = self.v.tolist()
+        self.joint_states_pub.publish(joint_state_msg)
