@@ -375,6 +375,9 @@ class CameraSubscriber(Node):
             # === Coordinate Frame Transformation: OpenCV -> ROS ===
             # OpenCV camera frame: Z forward, X right, Y down
             # ROS camera_link frame: X forward, Y left, Z up
+            # TODO transform from "camera_link" to "base_link"
+
+
             t_msg.transform.translation.x = float(tz)    # Forward (camera Z -> ROS X)
             t_msg.transform.translation.y = float(-tx)   # Left/Right (camera -X -> ROS Y)
             t_msg.transform.translation.z = float(-ty)   # Up/Down (camera -Y -> ROS Z)
