@@ -65,9 +65,9 @@ class CubeDetector(Node):
         # TODO adapt paths and update
         # Histogram paths
 
-        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_red.npy")
-        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_green.npy")
-        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_blue.npy")
+        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red.npy")
+        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_green.npy")
+        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue.npy")
 
         self.trackers = {
             "red":   {

@@ -24,6 +24,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from rclpy.callback_groups import ReentrantCallbackGroup
 from ainex_interfaces.msg import CubeBBox, CubeBBoxList
+from collections import deque
+
 
 
 class CubeDetector(Node):
@@ -34,23 +36,24 @@ class CubeDetector(Node):
         self.cb_group = ReentrantCallbackGroup()
         self.bridge = CvBridge()
         self.frame = None
+        #/home/liamb/HRS_ST3AL/src/vision/histograms/hist_blue_front-face.npy
 
         # Histogram paths
-        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_red_front-face.npy")
-        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_green_front-face.npy")
-        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/vision/maalon/hist_blue_front-face.npy")
+        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red_front-face_new.npy")
+        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_green_front-face_new.npy")
+        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new.npy")
 
         # --- [TUNE] global parameters ---
-        self.min_blob_area = 250
-        self.conf_thresh = 10.0           # min mean bp in bbox to accept
-        self.square_scale = 0.95          # padding scale for square bbox
-        self.ema_alpha = 0.2             # smoothing strength (higher = more responsive)
-        self.roi_search_scale = 1.5      # search region size around last_window (multiplier)
-        self.keep_last_on_fail = True     # publish last_window even if lost this frame
+        self.min_blob_area = 1700
+        self.conf_thresh = 10.0           # min mean bp in bbox to accept :: Higher = more certain but can lose target :: Lower = more sensitive but can drift to background
+        self.square_scale = 0.9          # padding scale for square bbox -> Relevant because for depth we only want the width of. Because of camera angle the detection also detects the top of the cube so we need to make the box smaller to better fit the cube size
+        self.ema_alpha = 0.35             # smoothing strength (higher = more responsive) :: Higher = more responsive :: Lower = smoother but can lag behind on fast motion
+        self.roi_search_scale = 1.5      # search region size around last_window (multiplier) :: Higher = larger search area :: Lower = smaller search area (more stable but can lose target on fast motion)
+        self.keep_last_on_fail = True     # publish last_window even if lost this frame 
 
-        self.bp_tight_thr = 40              # [TUNE] 60..120 tighter bbox threshold
+        self.bp_tight_thr = 5              # [TUNE] 60..120 tighter bbox threshold :: Higher = tighter Mask (less Background) :: lower = looser Mask (more Background)
         self.jump_center_px = 100           # [TUNE] max center jump allowed before reset
-        self.jump_area_ratio = 3.5          # [TUNE] if area changes too much -> reset
+        self.jump_area_ratio = 2.0          # [TUNE] if area changes too much -> reset
 
         # Optical flow parameterscd 
         self.flow_min_pts = 25
@@ -63,6 +66,33 @@ class CubeDetector(Node):
     
         self.use_optical_flow = False
 
+        # --- [TUNE] temporal smoothing for BBox locations ---
+        self.hist_len = 15                 # z.B. 5..12 (größer = ruhiger, aber mehr lag)
+        self.use_history_median = True    # Median filter on last N detections
+
+
+        # --- [TUNE] per-color params (red needs stricter S/V + different thresholds) ---
+        self.color_params = {
+            "red": {
+                "sv_min": (0, 70, 50),   # (Hmin, Smin, Vmin)  -> stricter to suppress gray/dark background
+                "blur": (3, 3),          # less smearing for red
+                "bp_tozero": 20,         # keep weaker red responses (wrap-around behavior)
+                "tight_thr": 70,         # binary threshold for tight bbox
+            },
+            "green": {
+                "sv_min": (0, 35, 35),
+                "blur": (5, 5),
+                "bp_tozero": 30,
+                "tight_thr": 80,
+            },
+            "blue": {
+                "sv_min": (0, 35, 35),
+                "blur": (5, 5),
+                "bp_tozero": 30,
+                "tight_thr": 80,
+            },
+        }
+
 
         self.DRAW = {
             "red":   {"box": (0, 0, 255)},
@@ -71,9 +101,9 @@ class CubeDetector(Node):
         }
 
         self.trackers = {
-            "red":   {"hist": np.load(self.red_hist_path)},
-            "green": {"hist": np.load(self.green_hist_path)},
-            "blue":  {"hist": np.load(self.blue_hist_path)},
+            "red":   {"hue_hist": np.load(self.red_hist_path)},
+            "green": {"hue_hist": np.load(self.green_hist_path)},
+            "blue":  {"hue_hist": np.load(self.blue_hist_path)},
         }
         # init per-color state
         for c in self.trackers:
@@ -107,7 +137,29 @@ class CubeDetector(Node):
             # optical flow
             "flow_pts": None,
             "flow_prev_gray": None,
+            # history for median/mean smoothing
+            "win_hist": deque(maxlen=self.hist_len),
         })
+
+    def smooth_with_history(self, t, win, W, H):
+        """
+        Robust temporal smoothing: median of last N (cx, cy, s).
+        Works great to kill single-frame outliers.
+        """
+        x, y, w, h = win
+        cx = x + w / 2.0
+        cy = y + h / 2.0
+        s = float(w)  # square
+
+        t["win_hist"].append((cx, cy, s))
+
+        arr = np.array(t["win_hist"], dtype=np.float32)
+        cx_m = float(np.median(arr[:, 0]))
+        cy_m = float(np.median(arr[:, 1]))
+        s_m  = float(np.median(arr[:, 2]))
+
+        return self.clamp_square_from_center(cx_m, cy_m, s_m, W, H)
+
 
     def camera_cb(self, msg: Image):
         try:
@@ -143,18 +195,23 @@ class CubeDetector(Node):
     # ----------------------------
     # Backprojection + Blob
     # ----------------------------
-    def back_projection(self, hist, hsv):
+    def back_projection(self, color, hist, hsv):
         h, s, v = cv2.split(hsv)
 
-        # [TUNE] mask to suppress gray/dark pixels
-        mask_sv = cv2.inRange(hsv, (0, 40, 50), (179, 255, 230))
+        p = self.color_params[color]
+        sv_min = p["sv_min"]
+        blur_k = p["blur"]
+        tozero = p["bp_tozero"]
+
+        # per-color S/V mask
+        mask_sv = cv2.inRange(hsv, sv_min, (179, 255, 255))
 
         bp = cv2.calcBackProject([h], [0], hist, [0, 180], 1)
-        bp = cv2.GaussianBlur(bp, (5, 5), 0)  # [TUNE]
+        bp = cv2.GaussianBlur(bp, blur_k, 0)
         bp = cv2.bitwise_and(bp, bp, mask=mask_sv)
 
-        # [TUNE] remove low responses
-        _, bp = cv2.threshold(bp, 40, 255, cv2.THRESH_TOZERO)
+        # remove low responses (per color)
+        _, bp = cv2.threshold(bp, tozero, 255, cv2.THRESH_TOZERO)
         return bp
 
     def find_biggest_blob(self, bp, min_area=300):
@@ -315,6 +372,10 @@ class CubeDetector(Node):
         # flow
         t["flow_pts"] = None
         t["flow_prev_gray"] = None
+
+        # history
+        t["win_hist"].clear()
+
         if not keep_last:
             t["last_window"] = None
 
@@ -338,8 +399,13 @@ class CubeDetector(Node):
         t = self.trackers[color]
         t["tracked"] = False
 
-        bp = self.back_projection(hist=t["hist"], hsv=hsv)
+        # per-color backprojection
+        bp = self.back_projection(color=color, hist=t["hue_hist"], hsv=hsv)
+
         H, W = bp.shape[:2]
+
+        # per-color tight threshold
+        thr = self.color_params[color]["tight_thr"]
 
         # 1) define a search region: ROI around last only if it exists
         roi_win = None
@@ -350,12 +416,12 @@ class CubeDetector(Node):
         win = None
         if roi_win is not None:
             win = self.tight_bbox_from_bp(
-                bp, search_win=roi_win, thr=self.bp_tight_thr, min_area=self.min_blob_area
+                bp, search_win=roi_win, thr=thr, min_area=self.min_blob_area
             )
 
         if win is None:
             win = self.tight_bbox_from_bp(
-                bp, search_win=None, thr=self.bp_tight_thr, min_area=self.min_blob_area
+                bp, search_win=None, thr=thr, min_area=self.min_blob_area
             )
 
         if win is None:
@@ -390,15 +456,19 @@ class CubeDetector(Node):
 
         x, y, w, h = win
 
-        # 5) square bbox with MUCH smaller padding
+        # 5) square bbox
         win = self.square_box(x, y, w, h, W, H, scale=self.square_scale)
 
-        # 6) EMA smoothing (but after a reset it will re-init and snap)
+        # 6) robust history smoothing (median)
+        if self.use_history_median:
+            win = self.smooth_with_history(t, win, W, H)
+
+        # 7) EMA smoothing on top (optional; makes motion a bit smoother)
         cx, cy, s_ema = self.ema_window(t, win, alpha=self.ema_alpha)
         win = self.clamp_square_from_center(cx, cy, s_ema, W, H)
 
 
-        # 7) optical flow: only if already initialized and we did not just reset
+        # 8) optical flow: only if already initialized and we did not just reset
         if self.use_optical_flow:
             if t["flow_pts"] is None or t["flow_prev_gray"] is None:
                 self.init_flow_in_window(t, win, bp=bp)
