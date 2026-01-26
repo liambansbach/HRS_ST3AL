@@ -436,15 +436,15 @@ class ImitationControlNode(Node):
         # sho_roll ~ horizontal angle of shoulder-elbow (azimuth)  
         # el_pitch ~ vertical angle of elbow-wrist (elevation)
         # el_yaw ~ horizontal angle of elbow-wrist (azimuth)
-        sho_pitch_target_left = msg.sho_elbow_vert_left
-        sho_roll_target_left = msg.sho_elbow_horiz_left
-        el_pitch_target_left = msg.elbow_wrist_vert_left
-        el_yaw_target_left = msg.elbow_wrist_horiz_left
-        
-        sho_pitch_target_right = msg.sho_elbow_vert_right
-        sho_roll_target_right = msg.sho_elbow_horiz_right
-        el_pitch_target_right = msg.elbow_wrist_vert_right
-        el_yaw_target_right = msg.elbow_wrist_horiz_right
+        sho_pitch_target_left = msg.shoulder_pitch_target_left
+        sho_roll_target_left = msg.shoulder_roll_target_left
+        el_pitch_target_left = msg.elbow_pitch_target_left
+        el_yaw_target_left = msg.elbow_yaw_target_left
+    
+        sho_pitch_target_right = msg.shoulder_pitch_target_right
+        sho_roll_target_right = msg.shoulder_roll_target_right
+        el_pitch_target_right = msg.elbow_pitch_target_right
+        el_yaw_target_right = msg.elbow_yaw_target_right
 
         q = self.ainex_robot.read_joint_positions_from_robot()
 

@@ -102,6 +102,9 @@ class MPPose(Node):
 
         self.get_logger().info('Pose Recognition Node started! Listening to /image_raw/')
 
+        cv2.namedWindow("POSE", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("POSE", 800, 600)
+
     def image_callback(self, msg: Image):
         cv2.waitKey(1)
 

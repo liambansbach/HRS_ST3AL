@@ -61,35 +61,29 @@ class HumanToAinex(Node):
         """
         wrist_target_left = self.robot_wrist_target(self.left_shoulder, self.left_elbow, self.left_wrist)
         wrist_target_right = self.robot_wrist_target(self.right_shoulder, self.right_elbow, self.right_wrist)
-
-        angle_left_elbow, angle_right_elbow = self.robot_elbow_angle_target()
         
         # Compute vector angles for loose joint targets
-        (sho_elbow_horiz_left, sho_elbow_vert_left, 
-         elbow_wrist_horiz_left, elbow_wrist_vert_left) = self.compute_arm_vector_angles('left')
-        (sho_elbow_horiz_right, sho_elbow_vert_right, 
-         elbow_wrist_horiz_right, elbow_wrist_vert_right) = self.compute_arm_vector_angles('right')
+        theta_left = self.compute_arm_vector_angles(self.left_shoulder, self.left_elbow, self.left_wrist)
+        theta_right = self.compute_arm_vector_angles(self.right_shoulder, self.right_elbow, self.right_wrist)
         
-        msg = RobotImitationTargets()
-
         self.visualize_targets(wrist_target_left, "left")
         self.visualize_targets(wrist_target_right, "right")
 
+        msg = RobotImitationTargets()
+
         msg.wrist_target_left = wrist_target_left
         msg.wrist_target_right = wrist_target_right
-        msg.angle_left_elbow = float(angle_left_elbow)
-        msg.angle_right_elbow = float(angle_right_elbow)
-        
-        # New vector angle fields
-        msg.sho_elbow_horiz_left = float(sho_elbow_horiz_left)
-        msg.sho_elbow_vert_left = float(sho_elbow_vert_left)
-        msg.sho_elbow_horiz_right = float(sho_elbow_horiz_right)
-        msg.sho_elbow_vert_right = float(sho_elbow_vert_right)
-        
-        msg.elbow_wrist_horiz_left = float(elbow_wrist_horiz_left)
-        msg.elbow_wrist_vert_left = float(elbow_wrist_vert_left)
-        msg.elbow_wrist_horiz_right = float(elbow_wrist_horiz_right)
-        msg.elbow_wrist_vert_right = float(elbow_wrist_vert_right)
+
+        # Vector angle fields
+        msg.shoulder_pitch_target_left = float(theta_left[0])
+        msg.shoulder_roll_target_left = float(theta_left[1])
+        msg.elbow_pitch_target_left = float(theta_left[2])
+        msg.elbow_yaw_target_left = float(theta_left[3])
+
+        msg.shoulder_pitch_target_right = float(theta_right[0])
+        msg.shoulder_roll_target_right = float(theta_right[1])
+        msg.elbow_pitch_target_right = float(theta_right[2])
+        msg.elbow_yaw_target_right = float(theta_right[3])
 
         self.robot_targets_pub.publish(msg)
 
@@ -105,91 +99,38 @@ class HumanToAinex(Node):
         """
 
         """ Left """
-        HRV = np.array([
+        shoulder_wrist_mp = np.array([
             wrist.x - shoulder.x,
             wrist.y - shoulder.y,
             wrist.z - shoulder.z
         ])
 
-        HRV_len = np.linalg.norm(HRV)
-        HRV_unit = HRV / HRV_len
+        shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
+        shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
 
-        HOA = np.array([
+        shoulder_elbow_mp = np.array([
             elbow.x - shoulder.x,
             elbow.y - shoulder.y,
             elbow.z - shoulder.z
         ])
-        HUA = np.array([
+        elbow_wrist_mp = np.array([
             wrist.x - elbow.x,
             wrist.y - elbow.y,
             wrist.z - elbow.z
         ])
+        reaching_factor = shoulder_wrist_mp_len / (np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp))
 
-        reaching_factor = HRV_len / (np.linalg.norm(HOA) + np.linalg.norm(HUA))
+        full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
+        wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
 
-        full_reach_reaching_direction = HRV_unit * self.robot_full_reach_length
-        wtl = full_reach_reaching_direction * reaching_factor
-        wrist_target = Point()
-        wrist_target.x = -wtl[2]   # depth (MediaPipe z -> Robot x)
-        wrist_target.y = wtl[0]   # left/right (MediaPipe x -> Robot y)
-        wrist_target.z = -wtl[1]  # up/down (MediaPipe -y -> Robot z)
+        wrist_target_robot = Point()
+        wrist_target_robot.x = wrist_target[0]  
+        wrist_target_robot.y = wrist_target[1]  
+        wrist_target_robot.z = wrist_target[2] 
 
-        """ Right """
-        HRV_right = np.array([
-            self.right_wrist.x - self.right_shoulder.x,
-            self.right_wrist.y - self.right_shoulder.y,
-            self.right_wrist.z - self.right_shoulder.z
-        ])
-        HRV_right_len = np.linalg.norm(HRV_right)
-        HRV_right_unit = HRV_right / HRV_right_len
+        return wrist_target_robot
 
-        HOA_right = np.array([
-            self.right_elbow.x - self.right_shoulder.x,
-            self.right_elbow.y - self.right_shoulder.y,
-            self.right_elbow.z - self.right_shoulder.z
-        ])
-        HUA_right = np.array([
-            self.right_wrist.x - self.right_elbow.x,
-            self.right_wrist.y - self.right_elbow.y,
-            self.right_wrist.z - self.right_elbow.z
-        ])
-
-        reaching_factor_right = HRV_right_len / (np.linalg.norm(HOA_right) + np.linalg.norm(HUA_right))
-
-        full_reach_reaching_direction_right = HRV_right_unit * self.robot_full_reach_length
-        wtr = full_reach_reaching_direction_right * reaching_factor_right
-        wrist_target_right = Point()
-        wrist_target_right.x = -wtr[2]   # depth (MediaPipe z -> Robot x)
-        wrist_target_right.y = wtr[0]   # left/right (MediaPipe x -> Robot y)
-        wrist_target_right.z = -wtr[1]  # up/down (MediaPipe -y -> Robot z)
-
-        return wrist_target_left, wrist_target_right
-
-    def robot_elbow_angle_target(self):
-        """ 
-            Calculates the angle of the human elbow
-            Robot will target the same angle, but as a secondary optimization condition.
-        """
-
-        """ Left """
-        HOA_left = np.array([self.left_shoulder.x - self.left_elbow.x, self.left_shoulder.y -self.left_elbow.y])
-        HUA_left = np.array([self.left_wrist.x - self.left_elbow.x, self.left_wrist.y - self.left_elbow.y])
-        HOA_len_left = np.linalg.norm(HOA_left)
-        HUA_len_left = np.linalg.norm(HUA_left)
-
-        angle_left_elbow = np.arccos(np.dot(HOA_left, HUA_left) / (HOA_len_left * HUA_len_left))
-
-        """ Right """
-        HOA_right = np.array([self.right_shoulder.x - self.right_elbow.x, self.right_shoulder.y -self.right_elbow.y])
-        HUA_right = np.array([self.right_wrist.x - self.right_elbow.x, self.right_wrist.y - self.right_elbow.y])
-        HOA_len_right = np.linalg.norm(HOA_right)
-        HUA_len_right = np.linalg.norm(HUA_right)
-
-        angle_right_elbow = np.arccos(np.dot(HOA_right, HUA_right) / (HOA_len_right * HUA_len_right))
-
-        return angle_left_elbow, angle_right_elbow
-
-    def compute_arm_vector_angles(self, side: str):
+    def compute_arm_vector_angles(self, shoulder, elbow, wrist):
         """
         Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
         
@@ -211,40 +152,23 @@ class HumanToAinex(Node):
             (sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert)
             All angles in radians.
         """
-        if side == 'left':
-            shoulder = self.left_shoulder
-            elbow = self.left_elbow
-            wrist = self.left_wrist
-        else:
-            shoulder = self.right_shoulder
-            elbow = self.right_elbow
-            wrist = self.right_wrist
-        
+
         # Compute vectors in MediaPipe coordinates
-        sho_elbow_mp = np.array([
-            elbow.x - shoulder.x,
-            elbow.y - shoulder.y,
-            elbow.z - shoulder.z
-        ])
-        elbow_wrist_mp = np.array([
-            wrist.x - elbow.x,
-            wrist.y - elbow.y,
-            wrist.z - elbow.z
-        ])
-        
-        # Transform to robot coordinates:
-        # robot.x = -mp.z, robot.y = mp.x, robot.z = -mp.y
-        sho_elbow_robot = np.array([
-            -sho_elbow_mp[2],   # x = -mp.z (forward)
-            sho_elbow_mp[0],    # y = mp.x (left/right)
-            -sho_elbow_mp[1]    # z = -mp.y (up/down)
-        ])
-        elbow_wrist_robot = np.array([
-            -elbow_wrist_mp[2],
-            elbow_wrist_mp[0],
-            -elbow_wrist_mp[1]
-        ])
-        
+        shoulder_elbow_robot = self.mp_to_ainex_frame(
+            np.array([
+                elbow.x - shoulder.x,
+                elbow.y - shoulder.y,
+                elbow.z - shoulder.z
+            ])
+        )
+        elbow_wrist_robot = self.mp_to_ainex_frame(
+            np.array([
+                wrist.x - elbow.x,
+                wrist.y - elbow.y,
+                wrist.z - elbow.z
+            ])
+        )
+
         def vector_to_angles(vec):
             """
             Convert a 3D vector to horizontal (azimuth) and vertical (elevation) angles.
@@ -256,21 +180,81 @@ class HumanToAinex(Node):
             length = np.linalg.norm(vec)
             if length < 1e-6:
                 return 0.0, 0.0
-            
+
+
             # Horizontal angle (azimuth): angle in XY plane
             horiz = np.arctan2(y, x)
             
             # Vertical angle (elevation): angle from XY plane
             xy_length = np.sqrt(x**2 + y**2)
             vert = np.arctan2(z, xy_length)
+
+
+            # # try with dot product:
+            # # Calculate dot product
+            # dot_product_xy = np.dot(x, y)
+            # dot_product_
+            # # Calculate magnitudes (lengths of the vectors)
+            # magnitude_x = np.linalg.norm(x)
+            # magnitude_y = np.linalg.norm(y)
+            # magnitude_z = np.linalg.norm(z)
+
+            # # Calculate angle in radians
+            # angle_radians = np.arccos(dot_product / (magnitude_A * magnitude_B))
+
+            # # Convert radians to degrees
+            # horiz = np.degrees(angle_radians)
             
+
+
             return horiz, vert
         
-        sho_elbow_horiz, sho_elbow_vert = vector_to_angles(sho_elbow_robot)
-        elbow_wrist_horiz, elbow_wrist_vert = vector_to_angles(elbow_wrist_robot)
+        def left_shoulder_to_elbow(vec):
+            x, y, z = vec
+            theta_1 = np.arctan2(x, -z)
+            theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+            return theta_1, theta_2
         
-        return sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert
+        def left_elbow_to_wrist(theta_1, theta_2):
+            u = np.array([
+                np.sin(theta_1)*np.sin(theta_2), 
+                np.cos(theta_2),
+                -np.cos(theta_1)*np.sin(theta_2)
+            ])
+            c = np.array([
+                np.cos(theta_1), 
+                0,
+                np.sin(theta_1)
+            ])
+            s = np.array([
+                -np.sin(theta_1)*np.cos(theta_2), 
+                np.sin(theta_2),
+                np.cos(theta_1)*np.cos(theta_2)
+            ])
+
+            proj_u = np.dot(elbow_wrist_robot, u)
+            proj_c = np.dot(elbow_wrist_robot, c)
+            proj_s = np.dot(elbow_wrist_robot, s) 
+
+            theta_3 = np.arctan2(proj_s, proj_c)
+            theta_4 = np.arctan2(np.sqrt(proj_c**2 + proj_s**2), proj_u)
+
+            return theta_3, theta_4
+            
+        sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
+        elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(sho_elbow_horiz, sho_elbow_vert)
+        
+        return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
     
+    def mp_to_ainex_frame(self, mp_frame):
+        ainex_frame = np.array([
+            -mp_frame[2],   #x = -mp.z (forward)
+            mp_frame[0],    # y = mp.x (left/right)
+            -mp_frame[1],   # z = -mp.y (up/down)
+        ])
+
+        return ainex_frame
+
     def visualize_targets(self, xyz, side):
         """ 
             Visualizes the detected wrist positions and elbow angles in TF

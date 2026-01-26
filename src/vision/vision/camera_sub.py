@@ -217,9 +217,9 @@ def main():
 
     try:
         # NOT Visualize Display
-        #rclpy.spin(node)
+        rclpy.spin(node)
         # Visualize Display
-        node.display_loop()
+        #node.display_loop()
     except KeyboardInterrupt:
         pass
     finally:
