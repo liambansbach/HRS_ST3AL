@@ -14,8 +14,8 @@ T0_1 = Matrix([
 
 T1_2 = Matrix([
     [1, 0, 0 ,0],
-    [0, cos(t2), sin(t2), 0],
-    [0, -sin(t2), cos(t2), 0],
+    [0, cos(t2), -sin(t2), 0],
+    [0, sin(t2), cos(t2), 0],
     [0, 0, 0, 1]
 ])
 
@@ -33,8 +33,8 @@ T2_3 = Matrix([
     [0, 0, 0, 1]
 ])
 T3_4 = Matrix([
-    [cos(t4), sin(t4), 0, 0],
-    [-sin(t4), cos(t4), 0, 0],
+    [cos(t4), -sin(t4), 0, 0],
+    [sin(t4), cos(t4), 0, 0],
     [0, 0, 1 ,0 ],
     [0, 0, 0, 1]
 ])
@@ -45,9 +45,10 @@ T_wrist = Matrix([
     [0],
     [1]
 ])
+pprint("right_arm")
 
 T0_2 = T0_1*T1_2*T_elbow
-#pprint(T0_2)
+pprint(T0_2)
 
 T0_wrist = T0_1*T1_2*T2_3*T3_4*T_wrist 
 pprint(simplify(T0_wrist))

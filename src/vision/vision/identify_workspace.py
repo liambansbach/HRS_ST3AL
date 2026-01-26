@@ -369,19 +369,44 @@ class CameraSubscriber(Node):
             # Create TF message
             t_msg = TransformStamped()
             t_msg.header.stamp = self.get_clock().now().to_msg()
-            t_msg.header.frame_id = "camera_link"  # Parent frame (camera)
+            t_msg.header.frame_id = "base_link"  # Parent frame (robot base)
             t_msg.child_frame_id = "aruco_marker_" + str(i)  # Child frame (marker)
 
             # === Coordinate Frame Transformation: OpenCV -> ROS ===
             # OpenCV camera frame: Z forward, X right, Y down
             # ROS camera_link frame: X forward, Y left, Z up
-            # TODO transform from "camera_link" to "base_link"
+            #    # Forward (camera Z -> ROS X)
+            #   # Left/Right (camera -X -> ROS Y)
+            #  # Up/Down (camera -Y -> ROS Z)
 
+            cam_point = np.array([tx, ty, tz, 1.0], dtype=np.float32)
+            # codex matrix: 
+            # cam_to_base = np.array(
+            #     [
+            #         [0.0, -1.0, 0.0, 0.0430140359009206],
+            #         [0.0, 0.0, -1.0, 0.0],
+            #         [1.0, 0.0, 0.0, 0.152356120938238],
+            #         [0.0, 0.0, 0.0, 1.0],
+            #     ],
+            #     dtype=np.float32,
+            # )
 
-            t_msg.transform.translation.x = float(tz)    # Forward (camera Z -> ROS X)
-            t_msg.transform.translation.y = float(-tx)   # Left/Right (camera -X -> ROS Y)
-            t_msg.transform.translation.z = float(-ty)   # Up/Down (camera -Y -> ROS Z)
+            #your matrix: 
+            cam_to_base = np.array(
+                [
+                    [1.0, 0.0, 0.0, 0.0430140359009206],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.152356120938238],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
 
+            base_point = cam_to_base @ cam_point
+
+            t_msg.transform.translation.x = float(base_point[0])
+            t_msg.transform.translation.y = float(base_point[1])
+            t_msg.transform.translation.z = float(base_point[2])
             # === Convert Rotation Vector to Quaternion ===
             # Convert Rodrigues rotation vector to rotation matrix
             R_cv, _ = cv2.Rodrigues(rvec_f_i)
