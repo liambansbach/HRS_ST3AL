@@ -59,6 +59,7 @@ class HumanToAinex(Node):
         """     
             Assigns values to msg for publishing based on wirst and elbow target calculations 
         """
+<<<<<<< HEAD
         wrist_target_left = self.robot_wrist_target_left(self.left_shoulder, self.left_elbow, self.left_wrist)
         wrist_target_right = self.robot_wrist_target_right(self.right_shoulder, self.right_elbow, self.right_wrist)
         
@@ -66,6 +67,15 @@ class HumanToAinex(Node):
         theta_left = self.compute_arm_vector_angles_left(self.left_shoulder, self.left_elbow, self.left_wrist)
         theta_right = self.compute_arm_vector_angles_right(self.right_shoulder, self.right_elbow, self.right_wrist)
         theta_right = self.compute_arm_vector_angles_left(self.right_shoulder, self.right_elbow, self.right_wrist)
+=======
+        wrist_target_left = self.robot_wrist_target(self.left_shoulder, self.left_elbow, self.left_wrist)
+        wrist_target_right = self.robot_wrist_target(self.right_shoulder, self.right_elbow, self.right_wrist)
+        
+        # Compute vector angles for loose joint targets
+        theta_left = self.compute_arm_vector_angles(self.left_shoulder, self.left_elbow, self.left_wrist)
+        theta_right = self.compute_arm_vector_angles(self.right_shoulder, self.right_elbow, self.right_wrist)
+        
+>>>>>>> 17fd826 (psuh)
         self.visualize_targets(wrist_target_left, "left")
         self.visualize_targets(wrist_target_right, "right")
 
@@ -129,6 +139,7 @@ class HumanToAinex(Node):
         wrist_target_robot.z = wrist_target[2] 
 
         return wrist_target_robot
+<<<<<<< HEAD
     
     def robot_wrist_target_right(self, shoulder, elbow, wrist):
         """ 
@@ -181,6 +192,10 @@ class HumanToAinex(Node):
         return wrist_target_robot
     
     def compute_arm_vector_angles_left(self, shoulder, elbow, wrist):
+=======
+
+    def compute_arm_vector_angles(self, shoulder, elbow, wrist):
+>>>>>>> 17fd826 (psuh)
         """
         Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
         
@@ -218,6 +233,7 @@ class HumanToAinex(Node):
                 wrist.z - elbow.z
             ])
         )
+<<<<<<< HEAD
         
         def left_shoulder_to_elbow(vec):
             x, y, z = vec
@@ -351,6 +367,86 @@ class HumanToAinex(Node):
         
         return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
     
+=======
+
+        def vector_to_angles(vec):
+            """
+            Convert a 3D vector to horizontal (azimuth) and vertical (elevation) angles.
+            
+            Horizontal angle: angle in XY plane from X axis (atan2(y, x))
+            Vertical angle: angle from XY plane (atan2(z, sqrt(x²+y²)))
+            """
+            x, y, z = vec
+            length = np.linalg.norm(vec)
+            if length < 1e-6:
+                return 0.0, 0.0
+
+
+            # Horizontal angle (azimuth): angle in XY plane
+            horiz = np.arctan2(y, x)
+            
+            # Vertical angle (elevation): angle from XY plane
+            xy_length = np.sqrt(x**2 + y**2)
+            vert = np.arctan2(z, xy_length)
+
+
+            # # try with dot product:
+            # # Calculate dot product
+            # dot_product_xy = np.dot(x, y)
+            # dot_product_
+            # # Calculate magnitudes (lengths of the vectors)
+            # magnitude_x = np.linalg.norm(x)
+            # magnitude_y = np.linalg.norm(y)
+            # magnitude_z = np.linalg.norm(z)
+
+            # # Calculate angle in radians
+            # angle_radians = np.arccos(dot_product / (magnitude_A * magnitude_B))
+
+            # # Convert radians to degrees
+            # horiz = np.degrees(angle_radians)
+            
+
+
+            return horiz, vert
+        
+        def left_shoulder_to_elbow(vec):
+            x, y, z = vec
+            theta_1 = np.arctan2(x, -z)
+            theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+            return theta_1, theta_2
+        
+        def left_elbow_to_wrist(theta_1, theta_2):
+            u = np.array([
+                np.sin(theta_1)*np.sin(theta_2), 
+                np.cos(theta_2),
+                -np.cos(theta_1)*np.sin(theta_2)
+            ])
+            c = np.array([
+                np.cos(theta_1), 
+                0,
+                np.sin(theta_1)
+            ])
+            s = np.array([
+                -np.sin(theta_1)*np.cos(theta_2), 
+                np.sin(theta_2),
+                np.cos(theta_1)*np.cos(theta_2)
+            ])
+
+            proj_u = np.dot(elbow_wrist_robot, u)
+            proj_c = np.dot(elbow_wrist_robot, c)
+            proj_s = np.dot(elbow_wrist_robot, s) 
+
+            theta_3 = np.arctan2(proj_s, proj_c)
+            theta_4 = np.arctan2(np.sqrt(proj_c**2 + proj_s**2), proj_u)
+
+            return theta_3, theta_4
+            
+        sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
+        elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(sho_elbow_horiz, sho_elbow_vert)
+        
+        return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
+    
+>>>>>>> 17fd826 (psuh)
     def mp_to_ainex_frame(self, mp_frame):
         ainex_frame = np.array([
             -mp_frame[2],   #x = -mp.z (forward)

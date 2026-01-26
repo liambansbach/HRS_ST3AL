@@ -287,9 +287,13 @@ def main() -> None:
 
     try:
         # NOT Visualize Display
+<<<<<<< HEAD
         # rclpy.spin(node)
+=======
+        rclpy.spin(node)
+>>>>>>> 805ea03 (psuh)
         # Visualize Display
-        node.display_loop()
+        #node.display_loop()
     except KeyboardInterrupt:
         pass
     finally:
