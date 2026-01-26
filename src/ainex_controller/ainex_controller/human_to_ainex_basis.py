@@ -19,9 +19,6 @@ from tf2_ros import TransformBroadcaster
 
 from ainex_interfaces.msg import UpperbodyPose, RobotImitationTargets
 
-
-
-
 class HumanToAinex(Node):
     def __init__(self):
         super().__init__('human_to_ainex')
@@ -62,7 +59,9 @@ class HumanToAinex(Node):
         """     
             Assigns values to msg for publishing based on wirst and elbow target calculations 
         """
-        wrist_target_left, wrist_target_right = self.robot_wrist_target()
+        wrist_target_left = self.robot_wrist_target(self.left_shoulder, self.left_elbow, self.left_wrist)
+        wrist_target_right = self.robot_wrist_target(self.right_shoulder, self.right_elbow, self.right_wrist)
+
         angle_left_elbow, angle_right_elbow = self.robot_elbow_angle_target()
         
         # Compute vector angles for loose joint targets
@@ -94,7 +93,7 @@ class HumanToAinex(Node):
 
         self.robot_targets_pub.publish(msg)
 
-    def robot_wrist_target(self):
+    def robot_wrist_target(self, shoulder, elbow, wrist):
         """ 
             Calculates target position for robot wrist by mapping from humans full reach to robots full reach
             Uses human direction from shoulder to wrist and a reaching factor [0-1] to determine robot wrist target
@@ -106,33 +105,34 @@ class HumanToAinex(Node):
         """
 
         """ Left """
-        HRV_left = np.array([
-            self.left_wrist.x - self.left_shoulder.x,
-            self.left_wrist.y - self.left_shoulder.y,
-            self.left_wrist.z - self.left_shoulder.z
-        ])
-        HRV_left_len = np.linalg.norm(HRV_left)
-        HRV_left_unit = HRV_left / HRV_left_len
-
-        HOA_left = np.array([
-            self.left_elbow.x - self.left_shoulder.x,
-            self.left_elbow.y - self.left_shoulder.y,
-            self.left_elbow.z - self.left_shoulder.z
-        ])
-        HUA_left = np.array([
-            self.left_wrist.x - self.left_elbow.x,
-            self.left_wrist.y - self.left_elbow.y,
-            self.left_wrist.z - self.left_elbow.z
+        HRV = np.array([
+            wrist.x - shoulder.x,
+            wrist.y - shoulder.y,
+            wrist.z - shoulder.z
         ])
 
-        reaching_factor_left = HRV_left_len / (np.linalg.norm(HOA_left) + np.linalg.norm(HUA_left))
+        HRV_len = np.linalg.norm(HRV)
+        HRV_unit = HRV / HRV_len
 
-        full_reach_reaching_direction_left = HRV_left_unit * self.robot_full_reach_length
-        wtl = full_reach_reaching_direction_left * reaching_factor_left
-        wrist_target_left = Point()
-        wrist_target_left.x = -wtl[2]   # depth (MediaPipe z -> Robot x)
-        wrist_target_left.y = wtl[0]   # left/right (MediaPipe x -> Robot y)
-        wrist_target_left.z = -wtl[1]  # up/down (MediaPipe -y -> Robot z)
+        HOA = np.array([
+            elbow.x - shoulder.x,
+            elbow.y - shoulder.y,
+            elbow.z - shoulder.z
+        ])
+        HUA = np.array([
+            wrist.x - elbow.x,
+            wrist.y - elbow.y,
+            wrist.z - elbow.z
+        ])
+
+        reaching_factor = HRV_len / (np.linalg.norm(HOA) + np.linalg.norm(HUA))
+
+        full_reach_reaching_direction = HRV_unit * self.robot_full_reach_length
+        wtl = full_reach_reaching_direction * reaching_factor
+        wrist_target = Point()
+        wrist_target.x = -wtl[2]   # depth (MediaPipe z -> Robot x)
+        wrist_target.y = wtl[0]   # left/right (MediaPipe x -> Robot y)
+        wrist_target.z = -wtl[1]  # up/down (MediaPipe -y -> Robot z)
 
         """ Right """
         HRV_right = np.array([
