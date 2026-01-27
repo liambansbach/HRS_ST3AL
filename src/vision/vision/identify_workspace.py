@@ -378,10 +378,11 @@ class CameraSubscriber(Node):
             #    # Forward (camera Z -> ROS X)
             #   # Left/Right (camera -X -> ROS Y)
             #  # Up/Down (camera -Y -> ROS Z)
-
             cam_point = np.array([tz, -tx, -ty, 1.0], dtype=np.float32)
-   
-            cam_to_base = np.array(
+            
+            # your first attempt for transforming the frames in here:
+            """
+            T_cam_to_base = np.array(
                 [
                     [1.0, 0.0, 0.0, 0.0430140359009206],
                     [0.0, 1.0, 0.0, 0.0],
@@ -390,12 +391,47 @@ class CameraSubscriber(Node):
                 ],
                 dtype=np.float32,
             )
+            cam_point = T_cam_to_base @ cam_point
+            """
+            
+            #@liam just copy this:
+            """
+            def define_homogenous_transform(translation, rotation_angle):
+                # For now, we use a fixed transformation from camera to base
+                # In future, include head joint angles for dynamic transform
+                T = np.eye(4, dtype=np.float32)
+                T[0:3, 3] = translation
+                c1 = np.cos(rotation_angle[0])
+                s1 = np.sin(rotation_angle[0])
+                c2 = np.cos(rotation_angle[1])
+                s2 = np.sin(rotation_angle[1])
+                c3 = np.cos(rotation_angle[2])s3 = np.sin(rotation_angle[2])
+                # Rotation matrices for each axis
+                Rx = np.array([[1, 0, 0],
+                               [0, c1, -s1],
+                               [0, s1, c1]], dtype=np.float32)
+                Ry = np.array([[c2, 0, s2],
+                               [0, 1, 0],
+                               [-s2, 0, c2]], dtype=np.float32)
+                Rz = np.array([[c3, -s3, 0],
+                               [s3, c3, 0],
+                               [0, 0, 1]], dtype=np.float32)
+                # Combined rotation matrix
+                R_combined = Rz @ Ry @ Rx
+                T[0:3, 0:3] = R_combined
+                return T
+            head_yaw_angle = 0.0 #np.pi/2  # Placeholder value
+            head_pitch_angle = 0.0    # Placeholder value
+            rotation_angles = [head_yaw_angle, head_pitch_angle, 0.0]  # roll is zero
+            T_cam_to_base = define_homogenous_transform(translation=np.array([0.0430140359009206, 0.0, 0.152356120938238]), rotation_angle=rotation_angles)
+            cam_point = T_cam_to_base @ cam_point
+            """
 
-            base_point = cam_to_base @ cam_point
+            
 
-            t_msg.transform.translation.x = float(base_point[0])
-            t_msg.transform.translation.y = float(base_point[1])
-            t_msg.transform.translation.z = float(base_point[2])
+            t_msg.transform.translation.x = float(cam_point[0])
+            t_msg.transform.translation.y = float(cam_point[1])
+            t_msg.transform.translation.z = float(cam_point[2])
             # === Convert Rotation Vector to Quaternion ===
             # Convert Rodrigues rotation vector to rotation matrix
             R_cv, _ = cv2.Rodrigues(rvec_f_i)
