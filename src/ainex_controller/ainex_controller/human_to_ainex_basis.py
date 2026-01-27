@@ -402,7 +402,6 @@ class HumanToAinex(Node):
                 A = c1 * x + s1 * z 
                 B = - s1  * c2 * x + s2 * y + c1 * c2 * z
                 D = s1 * s2 * x + c2 * y - c1 * s2 * z - L1
-                # check quadrant for theta_3
                 theta_3 = np.arctan2(B, A)
                 theta_4 = np.arctan2(np.sqrt(A**2 + B**2), D)
 
