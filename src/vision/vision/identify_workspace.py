@@ -379,19 +379,8 @@ class CameraSubscriber(Node):
             #   # Left/Right (camera -X -> ROS Y)
             #  # Up/Down (camera -Y -> ROS Z)
 
-            cam_point = np.array([tx, ty, tz, 1.0], dtype=np.float32)
-            # codex matrix: 
-            # cam_to_base = np.array(
-            #     [
-            #         [0.0, -1.0, 0.0, 0.0430140359009206],
-            #         [0.0, 0.0, -1.0, 0.0],
-            #         [1.0, 0.0, 0.0, 0.152356120938238],
-            #         [0.0, 0.0, 0.0, 1.0],
-            #     ],
-            #     dtype=np.float32,
-            # )
-
-            #your matrix: 
+            cam_point = np.array([tz, -tx, -ty, 1.0], dtype=np.float32)
+   
             cam_to_base = np.array(
                 [
                     [1.0, 0.0, 0.0, 0.0430140359009206],
@@ -418,6 +407,8 @@ class CameraSubscriber(Node):
             t_msg.transform.rotation.y = float(qy)
             t_msg.transform.rotation.z = float(qz)
             t_msg.transform.rotation.w = float(qw)
+
+
 
             # Broadcast the transform
             self.br.sendTransform(t_msg)
