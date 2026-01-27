@@ -97,8 +97,8 @@ class AiNexModel:
         rotation = np.asarray(rotation, dtype=float)
         placement = pin.SE3(rotation, translation)
 
-        # create Frame using parent joint id and SE3 placement
-        frame = pin.Frame(name, parent_joint, placement, pin.FrameType.OP_FRAME)
+        # create Frame using parent joint id, parent frame id, and SE3 placement
+        frame = pin.Frame(name, parent_joint, parent_frame_id, placement, pin.FrameType.OP_FRAME)
 
         # add to model and recreate data so sizes match
         self.model.addFrame(frame)

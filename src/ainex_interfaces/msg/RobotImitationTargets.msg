@@ -1,5 +1,11 @@
 geometry_msgs/Point wrist_target_left
-geometry_msgs/Point wrist_target_right
+float32 shoulder_pitch_target_left
+float32 shoulder_roll_target_left
+float32 elbow_pitch_target_left
+float32 elbow_yaw_target_left
 
-float32 angle_left_elbow
-float32 angle_right_elbow
+geometry_msgs/Point wrist_target_right
+float32 shoulder_pitch_target_right
+float32 shoulder_roll_target_right
+float32 elbow_pitch_target_right
+float32 elbow_yaw_target_right

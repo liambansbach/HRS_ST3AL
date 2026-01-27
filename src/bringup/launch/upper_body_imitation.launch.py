@@ -20,9 +20,18 @@ def generate_launch_description():
         py_version, 
         'site-packages'
     )
+    
+    # Add cmeel.prefix path for pinocchio
+    cmeel_site_packages = os.path.join(
+        venv_site_packages,
+        'cmeel.prefix',
+        'lib',
+        py_version,
+        'site-packages'
+    )
 
     existing_python_path = os.environ.get('PYTHONPATH', '')
-    new_python_path = f"{venv_site_packages}:{existing_python_path}"
+    new_python_path = f"{venv_site_packages}:{cmeel_site_packages}:{existing_python_path}"
 
     """ Defines all nodes to be launched """
     camera_sub = Node(
