@@ -66,6 +66,9 @@ class HumanToAinex(Node):
         theta_left = self.compute_arm_vector_angles_left(self.left_shoulder, self.left_elbow, self.left_wrist)
         theta_right = self.compute_arm_vector_angles_right(self.right_shoulder, self.right_elbow, self.right_wrist)
         theta_right = self.compute_arm_vector_angles_left(self.right_shoulder, self.right_elbow, self.right_wrist)
+
+        theta_left = self.calc_theta_angles("left", self.left_shoulder, self.left_elbow, self.left_wrist)
+
         self.visualize_targets(wrist_target_left, "left")
         self.visualize_targets(wrist_target_right, "right")
 
@@ -351,6 +354,73 @@ class HumanToAinex(Node):
         
         return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
     
+    def calc_theta_angles(self, side, shoulder, elbow, wrist):
+
+        # Compute vectors in MediaPipe coordinates
+        shoulder_elbow_robot = self.mp_to_ainex_frame(
+            np.array([
+                (elbow.x - shoulder.x),
+                (elbow.y - shoulder.y),
+                (elbow.z - shoulder.z)
+            ])
+        )
+        elbow_wrist_robot = self.mp_to_ainex_frame(
+            np.array([
+                (wrist.x - elbow.x),
+                (wrist.y - elbow.y),
+                (wrist.z - elbow.z)
+            ])
+        )
+        # not sure about this:
+        L1 = np.linalg.norm(shoulder_elbow_robot)
+        L2 = np.linalg.norm(elbow_wrist_robot)    
+        if side == "left":
+            def left_shoulder_to_elbow(vec):
+                x, y, z = vec
+                theta_1 = np.arctan2(x, -z)
+                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+                return theta_1, theta_2
+            def left_elbow_to_wrist(vec, theta_1, theta_2):
+                x, y, z = vec
+                s1 = np.sin(theta_1)
+                c1 = np.cos(theta_1)
+                s2 = np.sin(theta_2)
+                c2 = np.cos(theta_2)
+
+                # probably wrong, due to sign error in Pos
+                #theta_3 = np.arctan2(-s1 * c2 * x + s2 * x + c1 * c2 * z, -(c1 * x + s1 * z))
+                #theta_4 = np.arctan2(np.sqrt((c1 * x + s1 * z)**2 + (-s1 * c2 * x + s2 * x + c1 * c2 * z)**2),(s1 *s2 +x + c2 * y - c1 *s2 * z - L1))
+
+
+                # your first try, produces nan for theta_3 :
+                # theta_4 = np.arccos(1/L2 *( s1 *s2 * x + c2 * y - c1 * s2 * z - L1))
+                # s4 = np.sin(theta_4)
+                # theta_3 = np.arccos((c1 * x + s1 * z )/ (s4 * L2))  
+                # self.get_logger().info(f"theta_3_first: {theta_3}, theta_4_first: {theta_4}")
+
+                # gpts correction, works:
+                A = c1 * x + s1 * z 
+                B = - s1  * c2 * x + s2 * y + c1 * c2 * z
+                D = s1 * s2 * x + c2 * y - c1 * s2 * z - L1
+                # check quadrant for theta_3
+                theta_3 = np.arctan2(B, A)
+                theta_4 = np.arctan2(np.sqrt(A**2 + B**2), D)
+
+                #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
+                return theta_3, theta_4
+            
+            sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
+            elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(elbow_wrist_robot, sho_elbow_horiz, sho_elbow_vert)
+            
+            return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
+
+
+
+
+        elif side == "right":
+            pass
+
+
     def mp_to_ainex_frame(self, mp_frame):
         ainex_frame = np.array([
             -mp_frame[2],   #x = -mp.z (forward)

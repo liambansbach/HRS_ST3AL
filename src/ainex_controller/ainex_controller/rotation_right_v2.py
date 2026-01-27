@@ -6,9 +6,9 @@ x_elbow,y_elbow,z_elbow = symbols("x_wrist, y_wrist, z_wrist", real=True)
 
 
 T0_1 = Matrix([
-    [cos(t1), 0 , -sin(t1), 0],
+    [cos(t1), 0 , sin(t1), 0],
     [0, 1, 0, 0],
-    [sin(t1), 0, cos(t1), 0],
+    [-sin(t1), 0, cos(t1), 0],
     [0, 0, 0, 1]
 ])
 
@@ -21,15 +21,15 @@ T1_2 = Matrix([
 
 T_elbow = Matrix([
     [0 ],
-    [L1],
+    [-L1],
     [0],
     [1]
 ])
 
 T2_3 = Matrix([
-    [cos(t3), 0 , -sin(t3), 0],
+    [cos(t3), 0 , sin(t3), 0],
     [0, 1, 0, L1],
-    [sin(t3), 0, cos(t3), 0],
+    [-sin(t3), 0, cos(t3), 0],
     [0, 0, 0, 1]
 ])
 T3_4 = Matrix([
@@ -41,10 +41,11 @@ T3_4 = Matrix([
 
 T_wrist = Matrix([
     [0],
-    [L2],
+    [-L2],
     [0],
     [1]
 ])
+
 pprint("right_arm")
 
 T0_2 = T0_1*T1_2*T_elbow
@@ -53,6 +54,8 @@ pprint(T0_2)
 T0_wrist = T0_1*T1_2*T2_3*T3_4*T_wrist 
 pprint(simplify(T0_wrist))
 exit()
+
+
 t1_sol = atan2(x_elbow, -z_elbow)
 t2_sol = atan2(sqrt(x_elbow**2 + z_elbow**2), y_elbow)
 
