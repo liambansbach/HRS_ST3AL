@@ -68,6 +68,7 @@ class HumanToAinex(Node):
         theta_right = self.compute_arm_vector_angles_left(self.right_shoulder, self.right_elbow, self.right_wrist)
 
         theta_left = self.calc_theta_angles("left", self.left_shoulder, self.left_elbow, self.left_wrist)
+        theta_right = self.calc_theta_angles("right", self.right_shoulder, self.right_elbow, self.right_wrist)
 
         self.visualize_targets(wrist_target_left, "left")
         self.visualize_targets(wrist_target_right, "right")
@@ -403,6 +404,7 @@ class HumanToAinex(Node):
                 B = - s1  * c2 * x + s2 * y + c1 * c2 * z
                 D = s1 * s2 * x + c2 * y - c1 * s2 * z - L1
                 theta_3 = np.arctan2(B, A)
+                # maybe the +- infront of sqrt should be considered somehow to reach every position?
                 theta_4 = np.arctan2(np.sqrt(A**2 + B**2), D)
 
                 #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
@@ -413,11 +415,38 @@ class HumanToAinex(Node):
             
             return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
 
-
-
-
         elif side == "right":
-            pass
+            def left_shoulder_to_elbow(vec):
+                x, y, z = vec
+                theta_1 = np.arctan2(x, -z)
+                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+                return theta_1, theta_2
+            def left_elbow_to_wrist(vec, theta_1, theta_2):
+                x, y, z = vec
+                s1 = np.sin(theta_1)
+                c1 = np.cos(theta_1)
+                s2 = np.sin(theta_2)
+                c2 = np.cos(theta_2)
+
+                # not sure if marius equations are correct as -s2 * x seems wrong? 
+                #theta_3 = np.arctan((c1 * x + s1 *z), -(-s1 * c2 * x - s2 * x + c1 * c2 * z))
+                #theta_4 = np.arctan2(np.sqrt )
+
+                # gpts solved equations
+                A = c1 * x + s1 * z
+                B = - s1 * s2 * x + c2 * y + c1 * s2 * z + L1
+                C = - s1 * c2 * x - s2 * y + c1 * c2 * z
+                theta_3 = np.arctan2(A, -C)
+                theta_4 = np.arctan2(-B, np.sqrt( L2**2 - B**2))  # maybe the +- infront of sqrt should be considered somehow to reach every position?
+
+
+                #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
+                return theta_3, theta_4
+            
+            sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
+            elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(elbow_wrist_robot, sho_elbow_horiz, sho_elbow_vert)
+            
+            return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
 
 
     def mp_to_ainex_frame(self, mp_frame):
