@@ -130,13 +130,9 @@ class MPPose(Node):
             "Pose Recognition Node started! Listening to /image_raw/"
         )
 
-<<<<<<< HEAD
-        cv2.namedWindow("POSE", cv2.WINDOW_NORMAL)
+        # Optional: set a default window size (window already created above)
         cv2.resizeWindow("POSE", 800, 600)
 
-    def image_callback(self, msg: Image):
-=======
-<<<<<<< HEAD
     def image_callback(self, msg: Image) -> None:
         """
         Run pose estimation on incoming frames (rate-limited) and publish an upper-body rig.
@@ -151,13 +147,7 @@ class MPPose(Node):
         Args:
             msg: Incoming `sensor_msgs/Image` (expected BGR8 encoding).
         """
-=======
-        cv2.namedWindow("POSE", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("POSE", 800, 600)
 
-    def image_callback(self, msg: Image):
->>>>>>> 805ea03 (psuh)
->>>>>>> 17fd826 (psuh)
         cv2.waitKey(1)
 
         now_ns = time.monotonic_ns()

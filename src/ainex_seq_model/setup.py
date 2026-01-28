@@ -25,7 +25,9 @@ setup(
     entry_points={
         'console_scripts': [
             'test = ainex_seq_model.test_node_seq:main',
-            'cube_sequence = ainex_seq_model.sequence_model_node:main',
+            'sequence_model_3D = ainex_seq_model.sequence_model_node:main',
+            'sequence_model_2D = ainex_seq_model.sequence_model_2D:main',
+            'sequence_model_old = ainex_seq_model.sequence_model_old:main',
         ],
     },
 )

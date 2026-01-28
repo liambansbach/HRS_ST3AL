@@ -1,0 +1,13 @@
+# Goal
+uint32 min_world_states        # usually 2
+float32 idle_timeout_sec       # auto-finish after no activity while stable
+---
+# Result
+uint32 session_id
+ainex_interfaces/ManipulationEvent[] events
+ainex_interfaces/WorldState[] world_states
+---
+# Feedback
+uint32 num_events
+uint32 num_world_states
+string status

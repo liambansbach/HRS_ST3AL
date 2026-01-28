@@ -17,14 +17,16 @@ find_package(visualization_msgs REQUIRED)
 # find_package(<dependency> REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/RecordDemo.action"
   "msg/UpperbodyPose.msg"
   "msg/CubeCenter.msg"
   "msg/CubeCenterList.msg"
   "msg/CubeBBox.msg"
   "msg/CubeBBoxList.msg"
+  "msg/CubeSymbolicState.msg"
+  "msg/ManipulationEvent.msg"
   "msg/RobotImitationTargets.msg"
-  "msg/ManipulationSeq.msg"
-  "msg/ManipulationStep.msg"
+  "msg/WorldState.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs visualization_msgs
 )
 
