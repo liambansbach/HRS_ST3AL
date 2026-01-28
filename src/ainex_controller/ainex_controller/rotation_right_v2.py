@@ -5,7 +5,7 @@ L1, L2 = symbols("L1, L2", real=True)
 x_elbow,y_elbow,z_elbow = symbols("x_elbow, y_elbow, z_elbow", real=True)
 x_elbow,y_elbow,z_elbow = symbols("x_wrist, y_wrist, z_wrist", real=True)
 
-
+# TODO change signs of transformation matricies, s.t. inversion of theta_3 is done here instead of in human_to_ainex_basis.py
 T0_1 = Matrix([
     [cos(t1), 0 , -sin(t1), 0],
     [0, 1, 0, 0],
