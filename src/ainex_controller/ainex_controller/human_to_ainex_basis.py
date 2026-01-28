@@ -63,10 +63,6 @@ class HumanToAinex(Node):
         wrist_target_right = self.robot_wrist_target_right(self.right_shoulder, self.right_elbow, self.right_wrist)
         
         # Compute vector angles for loose joint targets
-        theta_left = self.compute_arm_vector_angles_left(self.left_shoulder, self.left_elbow, self.left_wrist)
-        theta_right = self.compute_arm_vector_angles_right(self.right_shoulder, self.right_elbow, self.right_wrist)
-        theta_right = self.compute_arm_vector_angles_left(self.right_shoulder, self.right_elbow, self.right_wrist)
-
         theta_left = self.calc_theta_angles("left", self.left_shoulder, self.left_elbow, self.left_wrist)
         theta_right = self.calc_theta_angles("right", self.right_shoulder, self.right_elbow, self.right_wrist)
 
@@ -184,177 +180,6 @@ class HumanToAinex(Node):
 
         return wrist_target_robot
     
-    def compute_arm_vector_angles_left(self, shoulder, elbow, wrist):
-        """
-        Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
-        
-        These angles represent the direction of:
-          - Shoulder->Elbow vector (upper arm)
-          - Elbow->Wrist vector (forearm)
-        
-        relative to a reference direction (pointing forward/down).
-        
-        The angles are computed in the robot coordinate frame:
-          - robot.x = forward (MediaPipe -z)
-          - robot.y = left/right (MediaPipe x)
-          - robot.z = up/down (MediaPipe -y)
-        
-        Args:
-            side: 'left' or 'right'
-        
-        Returns:
-            (sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert)
-            All angles in radians.
-        """
-
-        # Compute vectors in MediaPipe coordinates
-        shoulder_elbow_robot = self.mp_to_ainex_frame(
-            np.array([
-                elbow.x - shoulder.x,
-                elbow.y - shoulder.y,
-                elbow.z - shoulder.z
-            ])
-        )
-        elbow_wrist_robot = self.mp_to_ainex_frame(
-            np.array([
-                wrist.x - elbow.x,
-                wrist.y - elbow.y,
-                wrist.z - elbow.z
-            ])
-        )
-        
-        def left_shoulder_to_elbow(vec):
-            x, y, z = vec
-            theta_1 = np.arctan2(x, -z)
-            theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
-            return theta_1, theta_2
-        
-        def left_elbow_to_wrist(theta_1, theta_2):
-            u = np.array([
-                np.sin(theta_1)*np.sin(theta_2), 
-                np.cos(theta_2),
-                -np.cos(theta_1)*np.sin(theta_2)
-            ])
-            c = np.array([
-                np.cos(theta_1), 
-                0,
-                np.sin(theta_1)
-            ])
-            s = np.array([
-                -np.sin(theta_1)*np.cos(theta_2), 
-                np.sin(theta_2),
-                np.cos(theta_1)*np.cos(theta_2)
-            ])
-
-            proj_u = np.dot(elbow_wrist_robot, u)
-            proj_c = np.dot(elbow_wrist_robot, c)
-            proj_s = np.dot(elbow_wrist_robot, s) 
-
-            theta_3 = np.arctan2(proj_s, proj_c)
-            theta_4 = np.arctan2(np.sqrt(proj_c**2 + proj_s**2), proj_u)
-
-            return theta_3, theta_4
-            
-        sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
-        elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(sho_elbow_horiz, sho_elbow_vert)
-        
-        return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
-    
-    def compute_arm_vector_angles_right(self, shoulder, elbow, wrist):
-        """
-        Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
-        
-        These angles represent the direction of:
-          - Shoulder->Elbow vector (upper arm)
-          - Elbow->Wrist vector (forearm)
-        
-        relative to a reference direction (pointing forward/down).
-        
-        The angles are computed in the robot coordinate frame:
-          - robot.x = forward (MediaPipe -z)
-          - robot.y = left/right (MediaPipe x)
-          - robot.z = up/down (MediaPipe -y)
-        
-        Args:
-            side: 'left' or 'right'
-        
-        Returns:
-            (sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert)
-            All angles in radians.
-        """
-
-        # Compute vectors in MediaPipe coordinates
-        shoulder_elbow_robot = self.mp_to_ainex_frame(
-            np.array([
-                (elbow.x - shoulder.x),
-                (elbow.y - shoulder.y),
-                (elbow.z - shoulder.z)
-            ])
-        )
-        elbow_wrist_robot = self.mp_to_ainex_frame(
-            np.array([
-                (wrist.x - elbow.x),
-                (wrist.y - elbow.y),
-                (wrist.z - elbow.z)
-            ])
-        )
-        
-        def right_shoulder_to_elbow(vec):
-            x, y, z = vec
-            # flipped signs for right arm
-            theta_1 = np.arctan2(-x, z)
-            # not sure if signs of theta_2 aka the sqrt should be negative here (is +-)
-            theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
-            return theta_1, theta_2
-        
-        def right_elbow_to_wrist(theta_1, theta_2):
-            u = np.array([
-                -np.sin(theta_1)*np.sin(theta_2), 
-                np.cos(theta_2),
-                np.cos(theta_1)*np.sin(theta_2)
-            ])
-            c = np.array([
-                -np.cos(theta_1), 
-                0,
-                -np.sin(theta_1) 
-            ])
-            s = np.array([
-                np.sin(theta_1)*np.cos(theta_2), 
-                np.sin(theta_2),
-                -np.cos(theta_1)*np.cos(theta_2)
-            ])
-
-            # with T0_1 and T2_3 inverted instead of T1_2 and T3_4
-            # u = np.array([
-            #     -np.sin(theta_1)*np.sin(theta_2), 
-            #     np.cos(theta_2),
-            #     -np.cos(theta_1)*np.sin(theta_2)
-            # ])
-            # c = np.array([
-            #     np.cos(theta_1), 
-            #     0,
-            #     -np.sin(theta_1) 
-            # ])
-            # s = np.array([
-            #     -np.sin(theta_1)*np.cos(theta_2), 
-            #     np.sin(theta_2),
-            #     -np.cos(theta_1)*np.cos(theta_2)
-            # ])
-
-            proj_u = np.dot(elbow_wrist_robot, u)
-            proj_c = np.dot(elbow_wrist_robot, c)
-            proj_s = np.dot(elbow_wrist_robot, s) 
-
-            theta_3 = np.arctan2(proj_s, proj_c)
-            theta_4 = np.arctan2(np.sqrt(proj_c**2 + proj_s**2), proj_u)
-
-            return theta_3, theta_4
-            
-        sho_elbow_horiz, sho_elbow_vert = right_shoulder_to_elbow(shoulder_elbow_robot)
-        elbow_wrist_horiz, elbow_wrist_vert = right_elbow_to_wrist(sho_elbow_horiz, sho_elbow_vert)
-        
-        return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
-    
     def calc_theta_angles(self, side, shoulder, elbow, wrist):
 
         # Compute vectors in MediaPipe coordinates
@@ -380,6 +205,7 @@ class HumanToAinex(Node):
                 x, y, z = vec
                 theta_1 = np.arctan2(x, -z)
                 theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+
                 return theta_1, theta_2
             def left_elbow_to_wrist(vec, theta_1, theta_2):
                 x, y, z = vec
@@ -388,26 +214,14 @@ class HumanToAinex(Node):
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
 
-                # probably wrong, due to sign error in Pos
-                #theta_3 = np.arctan2(-s1 * c2 * x + s2 * x + c1 * c2 * z, -(c1 * x + s1 * z))
-                #theta_4 = np.arctan2(np.sqrt((c1 * x + s1 * z)**2 + (-s1 * c2 * x + s2 * x + c1 * c2 * z)**2),(s1 *s2 +x + c2 * y - c1 *s2 * z - L1))
-
-
-                # your first try, produces nan for theta_3 :
-                # theta_4 = np.arccos(1/L2 *( s1 *s2 * x + c2 * y - c1 * s2 * z - L1))
-                # s4 = np.sin(theta_4)
-                # theta_3 = np.arccos((c1 * x + s1 * z )/ (s4 * L2))  
-                # self.get_logger().info(f"theta_3_first: {theta_3}, theta_4_first: {theta_4}")
-
                 # gpts correction, works:
                 A = c1 * x + s1 * z 
                 B = - s1  * c2 * x + s2 * y + c1 * c2 * z
-                D = s1 * s2 * x + c2 * y - c1 * s2 * z - L1
+                C = s1 * s2 * x + c2 * y - c1 * s2 * z + L1
                 theta_3 = np.arctan2(B, A)
                 # maybe the +- infront of sqrt should be considered somehow to reach every position?
-                theta_4 = np.arctan2(np.sqrt(A**2 + B**2), D)
+                theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
 
-                #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
                 return theta_3, theta_4
             
             sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
@@ -419,8 +233,9 @@ class HumanToAinex(Node):
             def left_shoulder_to_elbow(vec):
                 x, y, z = vec
                 theta_1 = np.arctan2(x, -z)
-                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), -y)
                 return theta_1, theta_2
+            
             def left_elbow_to_wrist(vec, theta_1, theta_2):
                 x, y, z = vec
                 s1 = np.sin(theta_1)
@@ -428,17 +243,13 @@ class HumanToAinex(Node):
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
 
+                A = c1*x + s1*z
+                B = -s1*s2*x + c2*y + c1*s2*z + L1
+                C = -s1*c2*x - s2*y + c1*c2*z
+
                 # not sure if marius equations are correct as -s2 * x seems wrong? 
-                #theta_3 = np.arctan((c1 * x + s1 *z), -(-s1 * c2 * x - s2 * x + c1 * c2 * z))
-                #theta_4 = np.arctan2(np.sqrt )
-
-                # gpts solved equations
-                A = c1 * x + s1 * z
-                B = - s1 * s2 * x + c2 * y + c1 * s2 * z + L1
-                C = - s1 * c2 * x - s2 * y + c1 * c2 * z
-                theta_3 = np.arctan2(A, -C)
-                theta_4 = np.arctan2(-B, np.sqrt( L2**2 - B**2))  # maybe the +- infront of sqrt should be considered somehow to reach every position?
-
+                theta_3 = np.arctan2(C, A)
+                theta_4 = np.arctan2(np.sqrt(A**2 + C**2), -B)
 
                 #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
                 return theta_3, theta_4
@@ -446,7 +257,7 @@ class HumanToAinex(Node):
             sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
             elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(elbow_wrist_robot, sho_elbow_horiz, sho_elbow_vert)
             
-            return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
+            return sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert
 
 
     def mp_to_ainex_frame(self, mp_frame):
