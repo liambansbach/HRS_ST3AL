@@ -47,7 +47,7 @@ class CubeDetector(Node):
         self.min_blob_area = 1700
         self.conf_thresh = 10.0           # min mean bp in bbox to accept :: Higher = more certain but can lose target :: Lower = more sensitive but can drift to background
         self.square_scale = 0.9          # padding scale for square bbox -> Relevant because for depth we only want the width of. Because of camera angle the detection also detects the top of the cube so we need to make the box smaller to better fit the cube size
-        self.ema_alpha = 0.35             # smoothing strength (higher = more responsive) :: Higher = more responsive :: Lower = smoother but can lag behind on fast motion
+        self.ema_alpha = 0.3             # smoothing strength (higher = more responsive) :: Higher = more responsive :: Lower = smoother but can lag behind on fast motion
         self.roi_search_scale = 1.5      # search region size around last_window (multiplier) :: Higher = larger search area :: Lower = smaller search area (more stable but can lose target on fast motion)
         self.keep_last_on_fail = True     # publish last_window even if lost this frame 
 
@@ -67,7 +67,7 @@ class CubeDetector(Node):
         self.use_optical_flow = False
 
         # --- [TUNE] temporal smoothing for BBox locations ---
-        self.hist_len = 15                 # z.B. 5..12 (größer = ruhiger, aber mehr lag)
+        self.hist_len = 10                 # z.B. 5..12 (größer = ruhiger, aber mehr lag)
         self.use_history_median = True    # Median filter on last N detections
 
 
@@ -117,7 +117,7 @@ class CubeDetector(Node):
 
         self.sub_distorted = self.create_subscription(
             Image,
-            'camera_image/undistorted',
+            'camera_image/undistorted', #"camera_image/compressed" oder "camera_image/undistorted" 
             self.camera_cb,
             sensor_qos,
             callback_group=self.cb_group,
@@ -180,6 +180,8 @@ class CubeDetector(Node):
             x, y, w, h = win
             cx = x + w / 2.0
             cy = y + h / 2.0
+
+            #cv2.circle(self.frame, (int(cx), int(cy + 0.5 * h)), radius=0, color=(255, 0, 0), thickness=-1)
 
             b = CubeBBox()
             b.id = color

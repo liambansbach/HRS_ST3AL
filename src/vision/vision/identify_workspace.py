@@ -182,13 +182,13 @@ class CameraSubscriber(Node):
                         # TEST: Verify workspace boundary checking function
                         # Calculate centroid of all marker centers
                         centers_of_centers = self.centers.mean(axis=0)
-                        print("centers_of_centers: ", centers_of_centers)
+                        #print("centers_of_centers: ", centers_of_centers)
                         # Test point inside workspace (should be True)
                         test = self.check_if_in_workspace((centers_of_centers[0], centers_of_centers[1]))
-                        print("is the point in the workspace? ", test)
+                        #print("is the point in the workspace? ", test)
                         # Test point far outside workspace (should be False)
                         test = self.check_if_in_workspace((centers_of_centers[0]+1000, centers_of_centers[1]+1000))
-                        print("is the point in the workspace? ", test)
+                        #print("is the point in the workspace? ", test)
 
                 cv2.imshow('Camera Subscrber', self.frame)
                 cv2.imshow('3D marker position', self.aruco_frame)

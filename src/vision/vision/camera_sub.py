@@ -289,7 +289,7 @@ def main() -> None:
         # NOT Visualize Display
         # rclpy.spin(node)
         # Visualize Display
-        #node.display_loop()
+        node.display_loop()
     except KeyboardInterrupt:
         pass
     finally:

@@ -39,6 +39,13 @@ class AiNexModel:
         self.x_left = pin.SE3.Identity()
         self.x_right = pin.SE3.Identity()
 
+        self.v_left = pin.Motion.Zero()
+        self.v_right = pin.Motion.Zero()
+
+        # Initialize Jacobians for left and right hands
+        self.J_left = np.zeros((6, self.model.nv))
+        self.J_right = np.zeros((6, self.model.nv))
+
         # Store joint names in Pinocchio order
         self.joint_names = list(self.model.names[1:])
         print("Node names in Pinocchio model:", self.joint_names)
@@ -52,24 +59,39 @@ class AiNexModel:
         pin.forwardKinematics(self.model, self.data, self.q, self.v)
         pin.updateFramePlacements(self.model, self.data)
 
+        # TODO: retrieve end-effector poses from updated pinocchio data
+        # Hint: take a look at the init function for hand ids
         self.x_left = self.data.oMf[self.left_hand_id].copy() # ref docu: Vector of absolute operationnel frame placements (wrt the world). 
         self.x_right = self.data.oMf[self.right_hand_id].copy() # Essentially this is the end-effector frame placement with respect to the base-link (com?)
 
-        #self.broadcast_tf("left") # Broadcaster for left hand
-        #self.broadcast_tf("right") # Broadcaster for right hand
+        # TODO: get end-effector Jacobians in pin.LOCAL_WORLD_ALIGNED frame
+        # https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/jnrh2023/template/frame.html
+        pin.computeJointJacobians(self.model, self.data, self.q) 
+        self.J_left = pin.getFrameJacobian(self.model, self.data, self.left_hand_id, pin.LOCAL_WORLD_ALIGNED)
+        self.J_right = pin.getFrameJacobian(self.model, self.data, self.right_hand_id, pin.LOCAL_WORLD_ALIGNED)
+
+        # TODO: calculate end-effector velocities using the Jacobians
+        # Hint: v_cartesian = J * v_joint
+        self.v_left = self.J_left @ self.v
+        self.v_right = self.J_right @ self.v
+
+        # TODO: broadcast tf transformation of hand links w.r.t. base_link for visualization in RViz
+        # Hint: take a look at the tf2_ros documentation for examples
+        # https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Broadcaster-Py.html
+        self.broadcast_tf("left") # Broadcaster for left hand
+        self.broadcast_tf("right") # Broadcaster for right hand
 
     def broadcast_tf(self, hand: str):
         t = TransformStamped()
         t.header.stamp = self.node.get_clock().now().to_msg()
+        t.header.frame_id = "base_link"
         t.child_frame_id = hand
 
         match hand:
             case "left":
                 chosen_hand = self.x_left
-                t.header.frame_id = "l_sho_pitch"    
             case "right":
                 chosen_hand = self.x_right
-                t.header.frame_id = "r_sho_pitch"
             case _:
                 print("The robot only have two hands, left or right...") 
                 return 
@@ -97,8 +119,8 @@ class AiNexModel:
         rotation = np.asarray(rotation, dtype=float)
         placement = pin.SE3(rotation, translation)
 
-        # create Frame using parent joint id, parent frame id, and SE3 placement
-        frame = pin.Frame(name, parent_joint, parent_frame_id, placement, pin.FrameType.OP_FRAME)
+        # create Frame using parent joint id and SE3 placement
+        frame = pin.Frame(name, parent_joint, placement, pin.FrameType.OP_FRAME)
 
         # add to model and recreate data so sizes match
         self.model.addFrame(frame)
@@ -111,7 +133,23 @@ class AiNexModel:
     def right_hand_pose(self):
         """Return the right hand pose in base_link frame."""
         return self.x_right
-        
+    
+    def left_hand_velocity(self):
+        """Return the left hand velocity in base_link frame."""
+        return self.v_left
+    
+    def right_hand_velocity(self):
+        """Return the right hand velocity in base_link frame."""
+        return self.v_right
+    
+    def left_hand_jacobian(self):
+        """Return the left hand jacobian in base_link frame."""
+        return self.J_left
+    
+    def right_hand_jacobian(self):
+        """Return the right hand jacobian in base_link frame."""
+        return self.J_right
+    
     def pin_joint_names(self):
         """Return the joint names in Pinocchio model order."""
         return self.joint_names
@@ -130,8 +168,8 @@ class AiNexModel:
         
         arm_joint_names = [prefix + 'sho_pitch', 
                            prefix + 'sho_roll', 
-                           prefix + 'el_yaw', 
-                           prefix + 'el_pitch']
+                           prefix + 'el_pitch', 
+                           prefix + 'el_yaw']
 
         arm_ids = []
         for name in arm_joint_names:
@@ -146,3 +184,4 @@ class AiNexModel:
         jid = self.model.getJointId(joint_name)
         q_idx = self.model.joints[jid].idx_q
         return q_idx
+    
