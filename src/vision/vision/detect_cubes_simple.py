@@ -44,7 +44,7 @@ class CubeDetector(Node):
         self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new.npy")
 
         # --- [TUNE] global parameters ---
-        self.min_blob_area = 1700
+        self.min_blob_area = 1000
         self.conf_thresh = 10.0           # min mean bp in bbox to accept :: Higher = more certain but can lose target :: Lower = more sensitive but can drift to background
         self.square_scale = 0.9          # padding scale for square bbox -> Relevant because for depth we only want the width of. Because of camera angle the detection also detects the top of the cube so we need to make the box smaller to better fit the cube size
         self.ema_alpha = 0.3             # smoothing strength (higher = more responsive) :: Higher = more responsive :: Lower = smoother but can lag behind on fast motion
