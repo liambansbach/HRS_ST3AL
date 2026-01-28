@@ -213,7 +213,14 @@ class HumanToAinex(Node):
                 C = s1 * s2 * x + c2 * y - c1 * s2 * z + L1
                 theta_3 = np.arctan2(B, A)
                 # maybe the +- infront of sqrt should be considered somehow to reach every position?
-                theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
+                # positive sign => elbow BELOW the shoulder seems to work
+                # negative sign => elbow ABOVE the shoulder seems to work
+                #TODO implement a way to determine if elbow is above or below shoulder to choose correct sign for theta_4 -> seems to work quite well now
+                #theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
+                sqrt_term = np.sqrt(A**2 + B**2)
+                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
+                theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, C)
+
 
                 return theta_3, theta_4
             
@@ -263,19 +270,38 @@ class HumanToAinex(Node):
                 # theta_4 = np.arctan2(c1*x + s1*z, c3 * (-s1*s2*x + c2*y + c1*s2*z + L1))
 
                 #chatgpts correction of your arctan2 version:
-                # he said this one was correct: 
+                # TODO change signs of FK aka in Transformation matrices to match the negation of theta_3 here;
                 theta_3 = -np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
                 # # he corrected theta_4 to this:
                 # # got this from theta_4 cosine rule rearrangement aka theta_4 = arccos( -1/L2 * proj)
                 proj = -s1*s2*x + c2*y + c1*s2*z + L1
+                # for this theta_4 following works: lift arms straighupwards, bending sideways, doing 90 degree elbow bend inwards (but only up to a point, but this also happens to left arm) -> seems to almost everything work
+                # what doesnt work: turning arm inside aka when both arms are on the thighs -> arm bends outwards (to the left) -> seems like theta_4 sign is still wrong
+                # TODO implement a way to determine if elbow is above or below shoulder to choose correct sign for theta_4
+                # positive sign => elbow BELOW the shoulder seems to work
+                # negative sign => elbow ABOVE the shoulder seems to work
                 theta_4 = np.arctan2(np.sqrt(L2**2 - proj**2), -proj)
-                # problem was theta_3 sign, which has to be inverted!
 
                 # he says: another valid configuration, where the arm bends "downwards":
                 # with non inverted theta_3, this produces shit
                 # with inverted theta_3, this produces arm bending inwards (to the right) -> could be correct!!! -> test tomorrow on real robot
+                # what works: arm inside aka both arms on the thighs -> arm bends inwards (to the right)
+                # what doesnt work: arm is a little bit 
                 theta_4 = np.arctan2(-np.sqrt(L2**2 - proj**2), -proj)
 
+                # TODO first validate this approach for the left arm, then test it on this arm: -> test this more tomorrow on real robot
+                # checking if arm is above shoulder to choose correct sign for theta_4:
+                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
+                sqrt_term = np.sqrt(L2**2 - proj**2)
+                theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, -proj)
+
+
+                """
+                #### Mini report of theta_4 behaviour:
+                - theta_4 with negative sign seems to be more correct, as the wrist is bend inwards like all the time in the videos
+                - for theta_4 with positive sign, the wrist is bend outwards in most poses, which seems wrong
+                - however, with negative theta_4, the wrist turns inwards instead of outwards for positions where the elbow is above the shoulder 
+                """
 
 
                 self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
