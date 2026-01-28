@@ -28,6 +28,7 @@ setup(
             'human_to_ainex_basis = ainex_controller.human_to_ainex_basis:main',
             'ainex_imitation_control_node = ainex_controller.ainex_imitation_control_node:main',
             'project_cubes_onto_workspace = ainex_controller.project_cubes_onto_workspace:main',
+            'stack_cubes = ainex_controller.stack_cubes:main',
         ],
     },
 )
