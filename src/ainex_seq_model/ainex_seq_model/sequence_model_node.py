@@ -35,15 +35,28 @@ class SequenceModel(Node):
         self.create_timer(0.05, self.tick)
 
         # --- motion params (TF xyz) ---
-        self.motion_window = 10          # frames to look back (10 @ 20Hz ≈ 0.5s)
+        self.motion_window = 15         # frames to look back (10 @ 20Hz ≈ 0.5s)
         self.occluded_frames = 6         # last N frames missing => occluded (~0.3s @ 20Hz)
-        self.min_disp_m = 0.002          # ignore tiny jitter (<2mm)
+        self.min_disp_m = 0.005          # ignore tiny jitter (<2mm)
 
-        self.v_moving_thresh = 0.03      # m/s  (tune)
+        self.v_moving_thresh = 0.05      # m/s  (tune)
         self.v_still_thresh  = 0.01      # m/s  (tune)
 
+        self.motion = {}
+        self.fsm_state = {}
+        self.still_count = {}
+        self.moving_count = {}
         for cube in self.frame_to_id.values():
-            self.motion = {cube: {"moving": False, "still": False, "occluded": True, "speed": 0.0}}
+            self.motion[cube] = {"moving": False, "still": False, "occluded": True, "speed": 0.0}
+            self.fsm_state[cube] = "UNKNOWN"
+            self.still_count[cube] = 0
+            self.moving_count[cube] = 0
+
+        # --- moving/still params ---
+        self.still_thresh = 5       # framecount (tune)
+        self.moving_thresh = 5      # framecount (tune)
+
+        self.events = []
         
     
     def tick(self):
@@ -52,7 +65,6 @@ class SequenceModel(Node):
 
         """
         now = rclpy.time.Time()
-        state = {}
 
         #For each cube, build a message and append it to its corresponding deque 
         for cube, color in self.frame_to_id.items():
@@ -82,8 +94,11 @@ class SequenceModel(Node):
                     "z": last["z"] if last and last.get("z") is not None else None,
                 }
 
-            state[color] = obs
             self.histories[color].append(obs)
+
+        self.derive_motion()
+        self.fsm_pick_place()
+
 
     def derive_motion(self) -> None:
         """
@@ -126,23 +141,23 @@ class SequenceModel(Node):
                 old_obs = valid_obs[0]
                 new_obs = valid_obs[-1]
 
-            #Derive dt using TF stamps 
-            dt_ns = (new_obs["t"].sec - old_obs["t"].sec) * 1_000_000_000
-            dt_ns += (new_obs["t"].nanosec - old_obs["t"].nanosec)
-            dt = 0.0
-            if dt_ns > 0:
-                dt = dt_ns / 1e9
+                #Derive dt using TF stamps 
+                dt_ns = (new_obs["t"].sec - old_obs["t"].sec) * 1_000_000_000
+                dt_ns += (new_obs["t"].nanosec - old_obs["t"].nanosec)
+                dt = 0.0
+                if dt_ns > 0:
+                    dt = dt_ns / 1e9
 
-            if dt > 0.0:
-                dx = float(new_obs["x"]) - float(old_obs["x"])
-                dy = float(new_obs["y"]) - float(old_obs["y"])
-                dz = float(new_obs["z"]) - float(old_obs["z"])
+                if dt > 0.0:
+                    dx = float(new_obs["x"]) - float(old_obs["x"])
+                    dy = float(new_obs["y"]) - float(old_obs["y"])
+                    dz = float(new_obs["z"]) - float(old_obs["z"])
 
-                #Distance in 3D
-                dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+                    #Distance in 3D
+                    dist = (dx * dx + dy * dy + dz * dz) ** 0.5
 
-                if dist >= self.min_disp_m:
-                    speed = dist / dt
+                    if dist >= self.min_disp_m:
+                        speed = dist / dt
 
             moving = False
             still = False
@@ -154,6 +169,77 @@ class SequenceModel(Node):
                     still = True
 
             self.motion[cube] = {"moving": moving, "still": still, "occluded": occluded, "speed": speed}
+
+
+    def fsm_pick_place(self) -> None:
+        event_t = self.get_clock().now().to_msg()
+
+        for cube in self.frame_to_id.values():
+            motion = self.motion.get(cube, None)
+            if motion is None:
+                continue
+
+            occ_flag = bool(motion.get("occluded", True))
+            cube_moving = bool(motion.get("moving", False))
+            cube_still  = bool(motion.get("still", False))
+
+            #Occluded cubes count as moving
+            if occ_flag:
+                cube_moving = True
+                cube_still = False
+
+            if cube_still:
+                self.still_count[cube] = self.still_count[cube] +1
+            else:
+                self.still_count[cube] = 0
+
+            if cube_moving:
+                self.moving_count[cube] = self.moving_count[cube] +1
+            else:
+                self.moving_count[cube] = 0
+
+            previous_state = self.fsm_state[cube]
+            new_state = previous_state
+
+            #State Transitions
+            if previous_state == "UNKNOWN":
+                if self.still_count[cube] >= self.still_thresh:
+                    new_state = "STILL"
+                elif self.moving_count[cube] >= self.moving_thresh:
+                    new_state = "MOVING"
+            
+            #PICK
+            elif previous_state == "STILL":
+                if self.moving_count[cube] >= self.moving_thresh:
+                    new_state = "MOVING"
+                    
+            #PLACE
+            elif previous_state == "MOVING":
+                if self.still_count[cube] >= self.still_thresh:
+                    new_state = "STILL"
+                    
+            #Write the events in the sequence
+            if (previous_state == "STILL") and (new_state == "MOVING"):
+                self.events.append({"t": event_t, "type": "PICK", "cube": cube})
+                last_event = self.events[-1]
+                self.get_logger().info(f'{last_event["type"]}: {last_event["cube"]}')
+            elif (previous_state == "MOVING") and (new_state == "STILL"):
+                self.events.append({"t": event_t, "type": "PLACE", "cube": cube})
+                last_event = self.events[-1]
+                self.get_logger().info(f'{last_event["type"]}: {last_event["cube"]}')
+
+            self.fsm_state[cube] = new_state
+
+
+            
+            
+
+
+
+
+
+
+
 
 
 def main(args=None):
