@@ -166,13 +166,6 @@ class HumanToAinex(Node):
         full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
         wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
 
-        #rotate around robot.y by -90 degrees
-        # wrist_target = np.array([
-        #     wrist_target[2],    #new x = old z
-        #     wrist_target[1],    #new y = old y
-        #     -wrist_target[0]    #new z = old x
-        # ])
-
         wrist_target_robot = Point()
         wrist_target_robot.x = wrist_target[0]  
         wrist_target_robot.y = wrist_target[1]  
@@ -243,15 +236,49 @@ class HumanToAinex(Node):
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
 
-                A = c1*x + s1*z
-                B = -s1*s2*x + c2*y + c1*s2*z + L1
-                C = -s1*c2*x - s2*y + c1*c2*z
+                # A = c1*x + s1*z
+                # B = -s1*s2*x + c2*y + c1*s2*z + L1
+                # C = -s1*c2*x - s2*y + c1*c2*z
 
                 # not sure if marius equations are correct as -s2 * x seems wrong? 
-                theta_3 = np.arctan2(C, A)
-                theta_4 = np.arctan2(np.sqrt(A**2 + C**2), -B)
+                # theta_3 = np.arctan2(C, A)
+                # theta_4 = np.arctan2(np.sqrt(A**2 + C**2), -B)
 
-                #self.get_logger().info(f"theta_3_second: {theta_3}, theta_4_second: {theta_4}")
+                # yours -> crashes instantly with invalid value in arccos:
+                # theta_3 = np.arctan((-s1*c2*x - s2*y + c1*c2*z) / (c1*x + s1*z))
+                # theta_4 = np.arccos(-1/L2 * ( -s1*s2*x + c2*y + c1*s2*z + L1))
+
+                # gpts arctan2 version -> this theta_3 seems to work, but theta_4 seems to be inverted 
+                # theta_3 = np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
+                # theta_4 = np.arctan2(np.sqrt(L2**2 - ( -s1*s2*x + c2*y + c1*s2*z + L1)**2), -(-s1*s2*x + c2*y + c1*s2*z + L1))
+                #trying to invert theta_4 to bend "upwards": -> arm bends outwards (to the left) now -> very likely wrong!!
+                #theta_4 = np.arctan2(-np.sqrt(L2**2 - ( -s1*s2*x + c2*y + c1*s2*z + L1)**2), -(-s1*s2*x + c2*y + c1*s2*z + L1))
+                # guess this version has some equation issue? 
+
+
+
+                # your arctan2 version: -> theta_4 seems still inverted, but when setting theta_4 negative it still bends outwards... wth? 
+                # theta_3 = np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
+                # c3 = np.cos(theta_3)
+                # theta_4 = np.arctan2(c1*x + s1*z, c3 * (-s1*s2*x + c2*y + c1*s2*z + L1))
+
+                #chatgpts correction of your arctan2 version:
+                # he said this one was correct: 
+                theta_3 = -np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
+                # # he corrected theta_4 to this:
+                # # got this from theta_4 cosine rule rearrangement aka theta_4 = arccos( -1/L2 * proj)
+                proj = -s1*s2*x + c2*y + c1*s2*z + L1
+                theta_4 = np.arctan2(np.sqrt(L2**2 - proj**2), -proj)
+                # problem was theta_3 sign, which has to be inverted!
+
+                # he says: another valid configuration, where the arm bends "downwards":
+                # with non inverted theta_3, this produces shit
+                # with inverted theta_3, this produces arm bending inwards (to the right) -> could be correct!!! -> test tomorrow on real robot
+                theta_4 = np.arctan2(-np.sqrt(L2**2 - proj**2), -proj)
+
+
+
+                self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
                 return theta_3, theta_4
             
             sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
