@@ -112,6 +112,47 @@ class AinexRobot():
         joint_state_msg.velocity = self.v.tolist()
         self.joint_states_pub.publish(joint_state_msg)
 
+    def set_grippers(self, l_pos: float = None, r_pos: float = None, duration: float = 1.0):
+        """
+        Set gripper joint positions in *model space* (URDF/pin order).
+        Works in sim (updates q + publishes joint_states) and real (also sends cmd).
+        """
+        l_gripper_id = self.robot_model.get_joint_id("l_gripper")
+        r_gripper_id = self.robot_model.get_joint_id("r_gripper")
 
+        if l_pos is not None:
+            self.q[l_gripper_id] = float(l_pos)
+        if r_pos is not None:
+            self.q[r_gripper_id] = float(r_pos)
+
+        # keep model consistent
+        self.robot_model.update_model(self.q, self.v)
+        self.publish_joint_states()
+
+        if not self.sim:
+            # send full-body q command (includes grippers)
+            self.send_cmd(self.q, duration)
+
+    def open_hand(self, which: str = "both", duration: float = 1.0):
+        # NOTE: choose values that match your robot conventions
+        if which == "both":
+            self.set_grippers(l_pos=-1.3, r_pos=1.3, duration=duration)
+        elif which == "left":
+            self.set_grippers(l_pos=-1.3, r_pos=None, duration=duration)
+        elif which == "right":
+            self.set_grippers(l_pos=None, r_pos=1.3, duration=duration)
+        else:
+            self.node.get_logger().warn(f"open_hand: unknown which='{which}'")
+
+    def close_hand(self, which: str = "both", duration: float = 1.0):
+        # NOTE: pick “closed” values; placeholders:
+        if which == "both":
+            self.set_grippers(l_pos=0.0, r_pos=0.0, duration=duration)
+        elif which == "left":
+            self.set_grippers(l_pos=0.0, r_pos=None, duration=duration)
+        elif which == "right":
+            self.set_grippers(l_pos=None, r_pos=0.0, duration=duration)
+        else:
+            self.node.get_logger().warn(f"close_hand: unknown which='{which}'")
 
 

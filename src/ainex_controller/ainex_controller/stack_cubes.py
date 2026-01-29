@@ -11,7 +11,8 @@ from typing import List, Optional, Dict
 
 from tf2_ros import TransformListener, Buffer
 
-from ainex_interfaces.action import RecordDemo  # server action :contentReference[oaicite:2]{index=2}
+from ainex_interfaces.action import RecordDemo
+from ainex_interfaces.msg import ManipulationEvent  # for test events like server returns
 
 from ainex_controller.ainex_model import AiNexModel
 from ainex_controller.ainex_robot import AinexRobot
@@ -37,12 +38,33 @@ def quat_to_rotmat(x, y, z, w):
 
 
 @dataclass
-class HandAction:
-    hand: str                      # "left" or "right"
-    rel_or_abs: str                # "rel" or "abs"
-    target_translation: np.ndarray  # shape (3,)
-    duration: float = 3.0
-    wait_after: float = 0.0        # seconds to wait after motion ends
+class Step:
+    """
+    A single sequential step.
+
+    kind="move":
+      - hand: "left"/"right"
+      - rel_or_abs: "rel"/"abs"
+      - target_translation: np.ndarray (3,)
+      - duration, wait_after
+
+    kind="grip":
+      - grip_cmd: "open"/"close"
+      - grip_which: "left"/"right"/"both"
+      - duration, wait_after
+    """
+    kind: str
+    duration: float = 2.0
+    wait_after: float = 0.0
+
+    # move
+    hand: Optional[str] = None
+    rel_or_abs: str = "abs"
+    target_translation: Optional[np.ndarray] = None
+
+    # grip
+    grip_cmd: Optional[str] = None
+    grip_which: str = "both"
 
 
 class StackCubesNode(Node):
@@ -54,12 +76,21 @@ class StackCubesNode(Node):
         # -----------------------------
         # Params
         # -----------------------------
-        # True: run built-in test motions at startup
-        # False: fetch events from server and then execute
-        self.declare_parameter("use_test_sequence", False)
+        self.declare_parameter("use_test_sequence", True)
         self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
 
-        # Action goal params (same as your client) :contentReference[oaicite:3]{index=3}
+        # Let you switch RViz-only vs real robot
+        self.declare_parameter("sim", True)
+        self.sim: bool = bool(self.get_parameter("sim").value)
+
+        # Base frame naming mess: URDF uses body_link; some nodes publish base_link.
+        self.declare_parameter("base_frame", "body_link")      # preferred
+        self.declare_parameter("alt_base_frame", "base_link")  # fallback
+        self.base_frame_pref: str = str(self.get_parameter("base_frame").value)
+        self.base_frame_alt: str = str(self.get_parameter("alt_base_frame").value)
+        self.base_frame_active: str = self.base_frame_pref  # will auto-resolve at runtime
+
+        # Action goal params (same as record_demo client)
         self.declare_parameter("min_world_states", 3)
         self.declare_parameter("idle_timeout_sec", 10.0)
         self.min_world_states = int(self.get_parameter("min_world_states").value)
@@ -72,7 +103,7 @@ class StackCubesNode(Node):
         urdf_path = pkg + "/urdf/ainex.urdf"
 
         self.robot_model = AiNexModel(self, urdf_path)
-        self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=True)
+        self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=self.sim)
 
         self.left_hand_controller = HandController(self, self.robot_model, arm_side="left")
         self.right_hand_controller = HandController(self, self.robot_model, arm_side="right")
@@ -87,7 +118,7 @@ class StackCubesNode(Node):
         # Initial pose
         # -----------------------------
         self.init_robot_pose = {
-            "head_tilt": 0, "head_pan": 0,
+            "head_tilt": -0.5, "head_pan": 0,
             "r_gripper": 0, "l_gripper": 0,
             "r_el_yaw": 1.58, "l_el_yaw": -1.58,
             "r_el_pitch": 0, "l_el_pitch": 0,
@@ -104,8 +135,7 @@ class StackCubesNode(Node):
         # -----------------------------
         # TF (cube poses)
         # -----------------------------
-        self.base_frame = "base_link"
-        self.cube_tf_prefix = "hrs_cube_"  # your projector TF naming :contentReference[oaicite:4]{index=4}
+        self.cube_tf_prefix = "hrs_cube_"  # hrs_cube_red/green/blue
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -114,18 +144,26 @@ class StackCubesNode(Node):
         self.create_timer(1.0 / 20.0, self._update_cube_positions)
 
         # -----------------------------
-        # Sequencer
+        # Sequencer state
         # -----------------------------
-        self.sequence: List[HandAction] = []
+        self.sequence: List[Step] = []
         self.seq_index: int = 0
-        self.action_started: bool = False
-        self.action_start_time: Optional[float] = None
+        self.step_started: bool = False
+        self.step_start_time: Optional[float] = None
 
         self.phase: str = "init"      # "init" -> "idle" <-> "run_sequence"
         self.autorun: bool = True
         self.clear_sequence_on_finish = True
         self.did_init = False
 
+        # "ready to stack" latch: set when server result arrives (or immediately in test mode)
+        self.ready_to_stack: bool = False
+        self.pending_events: List[ManipulationEvent] = []
+
+        # cube size
+        self.cube_size = 0.05  # 5cm
+
+        # main loop
         self.timer = self.create_timer(self.dt, self.control_loop)
 
         # -----------------------------
@@ -134,12 +172,14 @@ class StackCubesNode(Node):
         self.client = ActionClient(self, RecordDemo, "record_demo")
         self.waiting_for_server_result = False
 
-        # Startup behavior:
+        # -----------------------------
+        # Startup behavior
+        # -----------------------------
         if self.use_test_sequence:
-            self.enqueue_sequence(self.build_test_sequence(), replace=True)
-            self.get_logger().info("Loaded TEST sequence (use_test_sequence:=True).")
+            self.pending_events = self.build_test_server_events()
+            self.ready_to_stack = True
+            self.get_logger().info("TEST: ready_to_stack=True (fake server says: can start stacking).")
         else:
-            # Immediately start recording on the server; when result comes, execute it.
             self.start_recording_and_wait_result()
 
     # -----------------------------
@@ -148,10 +188,10 @@ class StackCubesNode(Node):
     def now_s(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
-    def action_elapsed(self) -> float:
-        if self.action_start_time is None:
+    def step_elapsed(self) -> float:
+        if self.step_start_time is None:
             return 0.0
-        return self.now_s() - self.action_start_time
+        return self.now_s() - self.step_start_time
 
     # -----------------------------
     # Robot helpers
@@ -191,85 +231,233 @@ class StackCubesNode(Node):
         )
         return R, t
 
+    def _resolve_base_frame(self) -> str:
+        """
+        Robustly resolve whether cubes live under body_link or base_link.
+        We pick the first one that can transform to any cube frame.
+        """
+        # If already resolved and still valid, keep it.
+        test_child = self.cube_tf_prefix + "red"
+        if self._can_T(self.base_frame_active, test_child):
+            return self.base_frame_active
+
+        # Try preferred
+        if self._can_T(self.base_frame_pref, test_child):
+            if self.base_frame_active != self.base_frame_pref:
+                self.get_logger().warn(f"Resolved base frame -> '{self.base_frame_pref}'")
+            self.base_frame_active = self.base_frame_pref
+            return self.base_frame_active
+
+        # Try alternative
+        if self._can_T(self.base_frame_alt, test_child):
+            if self.base_frame_active != self.base_frame_alt:
+                self.get_logger().warn(f"Resolved base frame -> '{self.base_frame_alt}'")
+            self.base_frame_active = self.base_frame_alt
+            return self.base_frame_active
+
+        # No cube TF yet; keep current, but don't spam.
+        return self.base_frame_active
+
     def _update_cube_positions(self):
+        base = self._resolve_base_frame()
         for c in ["red", "green", "blue"]:
             frame = self.cube_tf_prefix + c
-            T = self._get_T(self.base_frame, frame)
+            T = self._get_T(base, frame)
             self.cube_pos[c] = None if T is None else T[1]
 
     def get_cube_position(self, color: str) -> Optional[np.ndarray]:
         return self.cube_pos.get(color, None)
 
     # -----------------------------
-    # Sequence API
+    # "wait until TFs exist" helpers
     # -----------------------------
-    def enqueue_sequence(self, actions: List[HandAction], replace: bool = False):
-        if replace:
-            self.sequence = []
-            self.seq_index = 0
-            self.action_started = False
-            self.action_start_time = None
+    def extract_cube_order(self, events: List[ManipulationEvent]) -> List[str]:
+        order: List[str] = []
+        for e in events:
+            cid = str(e.cube_id)
+            if cid in ["red", "green", "blue"] and cid not in order:
+                order.append(cid)
+        return order
 
-        if actions:
-            self.sequence.extend(actions)
-            self.get_logger().info(
-                f"Enqueued {len(actions)} actions (pending now {len(self.sequence) - self.seq_index})."
-            )
+    def cube_tfs_ready(self, cube_ids: List[str]) -> bool:
+        base = self._resolve_base_frame()
+        for cid in cube_ids:
+            frame = self.cube_tf_prefix + cid
+            if not self._can_T(base, frame):
+                return False
+        return True
 
+    def missing_cube_tfs(self, cube_ids: List[str]) -> List[str]:
+        base = self._resolve_base_frame()
+        missing = []
+        for cid in cube_ids:
+            frame = self.cube_tf_prefix + cid
+            if not self._can_T(base, frame):
+                missing.append(f"{base}->{frame}")
+        return missing
+
+    # -----------------------------
+    # Sequence helpers
+    # -----------------------------
     def clear_sequence(self):
         self.sequence = []
         self.seq_index = 0
-        self.action_started = False
-        self.action_start_time = None
+        self.step_started = False
+        self.step_start_time = None
 
-    def has_pending_actions(self) -> bool:
+    def has_pending_steps(self) -> bool:
         return self.seq_index < len(self.sequence)
 
-    # -----------------------------
-    # Action execution
-    # -----------------------------
-    def start_action(self, action: HandAction):
-        T = self.make_target_se3(action.target_translation)
+    def start_step(self, step: Step):
+        # GRIP step
+        if step.kind == "grip":
+            if hasattr(self.ainex_robot, "open_hand") and hasattr(self.ainex_robot, "close_hand"):
+                if step.grip_cmd == "open":
+                    self.ainex_robot.open_hand(which=step.grip_which, duration=step.duration)
+                elif step.grip_cmd == "close":
+                    self.ainex_robot.close_hand(which=step.grip_which, duration=step.duration)
+                else:
+                    self.get_logger().warn(f"Unknown grip_cmd='{step.grip_cmd}'")
+            else:
+                self.get_logger().warn("AinexRobot has no open_hand/close_hand; skipping grip step.")
 
-        if action.hand == "left":
-            self.left_hand_controller.set_target_pose(T, duration=action.duration, type=action.rel_or_abs)
-        elif action.hand == "right":
-            self.right_hand_controller.set_target_pose(T, duration=action.duration, type=action.rel_or_abs)
+            self.step_started = True
+            self.step_start_time = self.now_s()
+            self.get_logger().info(
+                f"Start GRIP step {self.seq_index+1}/{len(self.sequence)}: "
+                f"{step.grip_cmd} {step.grip_which} dur={step.duration}s wait={step.wait_after}s"
+            )
+            return
+
+        # MOVE step
+        assert step.target_translation is not None, "move step needs target_translation"
+        assert step.hand in ["left", "right"], "move step needs hand left/right"
+
+        T = self.make_target_se3(step.target_translation)
+
+        if step.hand == "left":
+            self.left_hand_controller.set_target_pose(T, duration=step.duration, type=step.rel_or_abs)
         else:
-            self.get_logger().error(f"Unknown hand '{action.hand}' (must be 'left' or 'right')")
+            self.right_hand_controller.set_target_pose(T, duration=step.duration, type=step.rel_or_abs)
 
-        self.action_started = True
-        self.action_start_time = self.now_s()
+        self.step_started = True
+        self.step_start_time = self.now_s()
 
         self.get_logger().info(
-            f"Start action {self.seq_index+1}/{len(self.sequence)}: "
-            f"{action.hand} {action.rel_or_abs} trans={action.target_translation.tolist()} "
-            f"dur={action.duration}s wait={action.wait_after}s"
+            f"Start MOVE step {self.seq_index+1}/{len(self.sequence)}: "
+            f"{step.hand} {step.rel_or_abs} trans={step.target_translation.tolist()} "
+            f"dur={step.duration}s wait={step.wait_after}s"
         )
 
     def finish_sequence(self):
-        self.get_logger().info("Sequence finished -> going idle.")
+        self.get_logger().info("Stacking sequence finished -> going idle.")
         if self.clear_sequence_on_finish:
             self.clear_sequence()
         else:
             self.seq_index = len(self.sequence)
-            self.action_started = False
-            self.action_start_time = None
+            self.step_started = False
+            self.step_start_time = None
+
         self.phase = "idle"
         self.move_to_initial_position()
 
     # -----------------------------
-    # Test sequence
+    # TEST: fake server events (same type as server returns)
     # -----------------------------
-    def build_test_sequence(self) -> List[HandAction]:
+    def build_test_server_events(self) -> List[ManipulationEvent]:
+        def ev(ev_type: str, cube_id: str) -> ManipulationEvent:
+            e = ManipulationEvent()
+            e.type = ev_type
+            e.cube_id = cube_id
+            e.stamp = self.get_clock().now().to_msg()
+            return e
+
+        # order matters: first unique cube becomes "base"
         return [
-            HandAction(hand="left",  rel_or_abs="rel", target_translation=np.array([0.00,  0.10, 0.00]), duration=3.0, wait_after=2.0),
-            HandAction(hand="right", rel_or_abs="rel", target_translation=np.array([0.00, -0.10, 0.00]), duration=3.0, wait_after=2.0),
-            HandAction(hand="left",  rel_or_abs="rel", target_translation=np.array([0.00, -0.10, 0.00]), duration=3.0, wait_after=2.0),
+            ev("PICK", "red"),   ev("PLACE", "red"),
+            ev("PICK", "blue"),  ev("PLACE", "blue"),
+            ev("PICK", "green"), ev("PLACE", "green"),
         ]
 
     # -----------------------------
-    # SERVER: start recording, wait for result, translate to HandActions
+    # Stacking planner: events -> steps
+    # -----------------------------
+    def choose_arm_for_cube(self, p: np.ndarray) -> str:
+        # y<0 => right else left
+        return "right" if float(p[1]) < 0.0 else "left"
+
+    def build_stacking_steps_from_events(self, events: List[ManipulationEvent]) -> List[Step]:
+        # Extract cube order (unique appearance order)
+        order = self.extract_cube_order(events)
+
+        if len(order) < 2:
+            self.get_logger().warn(f"Not enough cubes in events to stack: {order}")
+            return []
+
+        # Read TFs now
+        poses: Dict[str, np.ndarray] = {}
+        for cid in order:
+            p = self.get_cube_position(cid)
+            if p is None:
+                self.get_logger().warn(f"Missing TF for cube '{cid}'. Cannot build stacking plan.")
+                return []
+            poses[cid] = p.copy()
+
+        base_id = order[0]
+        base_p = poses[base_id]
+
+        # Tunable offsets (start conservative)
+        z_above = 0.10     # approach above cube/target
+        z_grasp = 0.02     # near contact height above plane
+        z_lift  = 0.12     # lift after grasp
+        place_clear = 0.10
+
+        steps: List[Step] = []
+
+        # Stack remaining cubes onto base, increasing height each time.
+        for i, cid in enumerate(order[1:], start=1):
+            pick_p = poses[cid]
+            arm = self.choose_arm_for_cube(pick_p)
+
+            # Target stack position: above base + i*cube_size
+            stack_p = base_p + np.array([0.0, 0.0, i * self.cube_size])
+
+            # --- PICK ---
+            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.8, wait_after=0.2))
+
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=pick_p + np.array([0.0, 0.0, z_above]),
+                              duration=2.5, wait_after=0.2))
+
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=pick_p + np.array([0.0, 0.0, z_grasp]),
+                              duration=1.5, wait_after=0.1))
+
+            steps.append(Step(kind="grip", grip_cmd="close", grip_which=arm, duration=0.8, wait_after=0.2))
+
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=pick_p + np.array([0.0, 0.0, z_lift]),
+                              duration=2.0, wait_after=0.2))
+
+            # --- PLACE ---
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=stack_p + np.array([0.0, 0.0, place_clear]),
+                              duration=3.0, wait_after=0.2))
+
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=stack_p + np.array([0.0, 0.0, z_grasp]),
+                              duration=1.5, wait_after=0.1))
+
+            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.8, wait_after=0.2))
+
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                              target_translation=stack_p + np.array([0.0, 0.0, z_above]),
+                              duration=2.0, wait_after=0.2))
+
+        return steps
+
+    # -----------------------------
+    # SERVER: start recording, wait for result
     # -----------------------------
     def start_recording_and_wait_result(self):
         if self.waiting_for_server_result:
@@ -305,57 +493,13 @@ class StackCubesNode(Node):
         result_future.add_done_callback(self._result_cb)
 
     def _result_cb(self, future):
-        status = future.result().status
         res = future.result().result
-
-        self.get_logger().info(f"=== SERVER RESULT status={status} session_id={res.session_id} ===")
         self.get_logger().info(f"Events received: {len(res.events)}")
 
-        # Build a simple action sequence from events:
-        actions = self._events_to_left_arm_actions(res.events)
-
-        if not actions:
-            self.get_logger().warn("No executable actions built from server events -> staying idle.")
-        else:
-            self.enqueue_sequence(actions, replace=True)
-            self.get_logger().info("Loaded actions from server -> will execute sequence.")
-
+        self.pending_events = list(res.events)
+        self.ready_to_stack = True
         self.waiting_for_server_result = False
-
-    def _events_to_left_arm_actions(self, events) -> List[HandAction]:
-        """
-        VERY SIMPLE TEST:
-        For each event in order:
-          - move LEFT arm to current 3D TF position of that cube (abs)
-        """
-        out: List[HandAction] = []
-
-        for e in events:
-            cube_id = str(e.cube_id)  # expected: "red"/"green"/"blue" :contentReference[oaicite:5]{index=5}
-            p = self.get_cube_position(cube_id)
-
-            if p is None:
-                self.get_logger().warn(
-                    f"Event {e.type} for cube '{cube_id}', but TF '{self.cube_tf_prefix + cube_id}' not available. Skipping."
-                )
-                continue
-
-            # tiny offset in z so it doesn't collide immediately (tune later)
-            target = p + np.array([0.0, 0.0, 0.05])
-
-            out.append(
-                HandAction(
-                    hand="left",
-                    rel_or_abs="abs",
-                    target_translation=target,
-                    duration=3.0,
-                    wait_after=1.0,
-                )
-            )
-
-            self.get_logger().info(f"Built action: left -> {cube_id} @ {target.tolist()} (from event {e.type})")
-
-        return out
+        self.get_logger().info("SERVER: ready_to_stack=True (received result; can start stacking).")
 
     # -----------------------------
     # Main loop (timer)
@@ -373,36 +517,62 @@ class StackCubesNode(Node):
             self.ainex_robot.update(v_left, v_right, self.dt)
             return
 
-        # Idle
+        # Idle: if ready_to_stack, WAIT until TFs exist, then build plan
         if self.phase == "idle":
-            if self.autorun and self.has_pending_actions():
+            if self.ready_to_stack and self.pending_events and not self.has_pending_steps():
+                required = self.extract_cube_order(self.pending_events)
+
+                if not required:
+                    self.get_logger().warn("ready_to_stack but no cubes in events. Staying idle.")
+                    self.ready_to_stack = False
+                else:
+                    if not self.cube_tfs_ready(required):
+                        self.get_logger().warn(
+                            f"Waiting for cube TFs... missing: {self.missing_cube_tfs(required)}",
+                            throttle_duration_sec=2.0,
+                        )
+                    else:
+                        steps = self.build_stacking_steps_from_events(self.pending_events)
+                        if steps:
+                            self.sequence = steps
+                            self.seq_index = 0
+                            self.step_started = False
+                            self.step_start_time = None
+                            self.ready_to_stack = False
+                            self.get_logger().info(f"Built stacking plan with {len(self.sequence)} steps. Starting.")
+                        else:
+                            self.get_logger().warn("TFs ready but could not build plan. Staying idle.")
+                            self.ready_to_stack = False
+
+            if self.autorun and self.has_pending_steps():
                 self.phase = "run_sequence"
-                self.get_logger().info("Idle -> run_sequence (pending actions detected).")
+                self.get_logger().info("Idle -> run_sequence (pending steps detected).")
 
         # Run sequence (sequential)
         if self.phase == "run_sequence":
-            if not self.has_pending_actions():
+            if not self.has_pending_steps():
                 self.finish_sequence()
             else:
                 current = self.sequence[self.seq_index]
 
-                if not self.action_started:
-                    self.start_action(current)
+                if not self.step_started:
+                    self.start_step(current)
 
-                # Only update the active controller -> sequential behavior
-                if current.hand == "left":
-                    v_left = self.left_hand_controller.update(self.dt)
-                else:
-                    v_right = self.right_hand_controller.update(self.dt)
+                # MOVE: update active controller
+                if current.kind == "move":
+                    if current.hand == "left":
+                        v_left = self.left_hand_controller.update(self.dt)
+                    else:
+                        v_right = self.right_hand_controller.update(self.dt)
 
-                # Time-based completion
-                t = self.action_elapsed()
+                # Time-based completion (GRIP also just waits)
+                t = self.step_elapsed()
                 if t >= (current.duration + current.wait_after):
                     self.seq_index += 1
-                    self.action_started = False
-                    self.action_start_time = None
+                    self.step_started = False
+                    self.step_start_time = None
 
-                    if not self.has_pending_actions():
+                    if not self.has_pending_steps():
                         self.finish_sequence()
 
         # Apply commands
