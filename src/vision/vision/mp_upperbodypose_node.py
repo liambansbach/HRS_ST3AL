@@ -18,6 +18,13 @@ Notes:
   - The callback is rate-limited to ~30 Hz using `time.monotonic_ns()`.
   - Uses MediaPipe Tasks PoseLandmarker in IMAGE mode (per-frame detection).
   - Publishes only when both shoulders have sufficient visibility (> 0.3).
+
+HRS 2025 - Group B:
+    Liam Bansbach
+    Marius Moe Rena
+    Niklas Peter
+    Tobias Töws
+    Maalon Jochmann
 """
 
 import os
