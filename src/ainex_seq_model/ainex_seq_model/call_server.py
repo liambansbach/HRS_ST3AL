@@ -127,7 +127,7 @@ class RecordDemoClient(Node):
                     f"      {cs.cube_id}: vert={cs.vert} level={cs.level} height={cs.height}"
                 )
 
-        # Reset local state so user can START again
+        #Reset local state so user can START again
         self.recordingActive = False
         self.goalHandle = None
         self.resultFuture = None
