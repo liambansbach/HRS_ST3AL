@@ -44,7 +44,6 @@ from geometry_msgs.msg import Point
         theta_min_left: Minimum angles allowed in left arm (default: [-2.09, -np.pi/2, -2.09, -1.9])
         theta_max_left: Maximum angles allowed in left arm (default: [2.09, np.pi/2, 2.09, 0.3])
 """
-
 class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
@@ -427,6 +426,8 @@ class ImitationControlNode(Node):
         return T_sho_gripper.homogeneous
 
     def target_cb(self, msg: RobotImitationTargets):
+        perf_counter_ns = self._perf_counter_ns
+        t_start = perf_counter_ns()
         # Wrist position targets
         x_left = msg.wrist_target_left.x
         y_left = msg.wrist_target_left.y
@@ -451,7 +452,9 @@ class ImitationControlNode(Node):
         el_pitch_target_right = msg.elbow_pitch_target_right
         el_yaw_target_right = msg.elbow_yaw_target_right
 
+        t_before_read_q = perf_counter_ns()
         q = self.ainex_robot.read_joint_positions_from_robot()
+        t_read_q = perf_counter_ns()
 
         # Reference: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
         refs_left = np.array(
@@ -469,24 +472,23 @@ class ImitationControlNode(Node):
             return
 
         # Solve NMPC for left and right arms
-        perf_counter_ns = self._perf_counter_ns
-        t0 = perf_counter_ns()
+        t_before_left_nmpc = perf_counter_ns()
         optimal_solution_left = self.left_hand_controller.solve_nmpc(
             q[self.ainex_robot.left_arm_ids],
             refs_left.tolist()
         )
-        
+        t_left_nmpc = perf_counter_ns()
         optimal_solution_right = self.right_hand_controller.solve_nmpc(
             q[self.ainex_robot.right_arm_ids],
             refs_right.tolist()
         )
-        solve_time_ns = perf_counter_ns() - t0
+        t_right_nmpc = perf_counter_ns()
+        solve_time_ns = t_right_nmpc - t_before_left_nmpc
         self._nmpc_solve_time_ns = solve_time_ns
         self._nmpc_solve_time_accum_ns += solve_time_ns
         self._nmpc_solve_time_samples += 1
         # NOTE: time to solve both NMPC is about 2-4 ms on robot, but for the first call it's around 600ms
         # -> hence this is probably not the bottleneck for real-time control
-        self.get_logger().info(f"NMPC solve time: {solve_time_ns / 1e6:.2f} ms")
 
         # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 
         # here in such a way that robot isnt able to reach behind himself?
@@ -498,12 +500,33 @@ class ImitationControlNode(Node):
             optimal_solution_right['theta_dot'],
             self.dt
         )
+        t_update = perf_counter_ns()
 
         # Publish reference targets for visualization in RViz
         self.publish_nmpc_reference(
             [x_left, y_left, z_left],
             [x_right, y_right, z_right]
         )
+        t_publish = perf_counter_ns()
+        #self.get_logger().info("here the time printing should happen:_")
+        # with this get_logger the imitation doesnt work, dont know why?
+        # self.get_logger().info(
+        #     "Timing (ms): read_q=%.2f left_nmpc=%.2f right_nmpc=%.2f update=%.2f publish=%.2f total=%.2f",
+        #     (t_read_q - t_before_read_q) / 1e6,
+        #     (t_left_nmpc - t_before_left_nmpc) / 1e6,
+        #     (t_right_nmpc - t_left_nmpc) / 1e6,
+        #     (t_update - t_right_nmpc) / 1e6,
+        #     (t_publish - t_update) / 1e6,
+        #     (t_publish - t_start) / 1e6,
+        # )
+
+        print(                  "Timing (ms): read_q=%.2f left_nmpc=%.2f right_nmpc=%.2f update=%.2f publish=%.2f total=%.2f",
+            (t_read_q - t_before_read_q) / 1e6,
+            (t_left_nmpc - t_before_left_nmpc) / 1e6,
+            (t_right_nmpc - t_left_nmpc) / 1e6,
+            (t_update - t_right_nmpc) / 1e6,
+            (t_publish - t_update) / 1e6,
+            (t_publish - t_start) / 1e6,)
 
     def move_to_inital_position(self):
         # Home position defined in urdf/pinocchio model

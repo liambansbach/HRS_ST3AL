@@ -101,8 +101,10 @@ class AinexRobot():
         
         self.joint_controller.setJointPositions(self.joint_names, q_cmd.tolist(), dt, unit="rad")
 
+    # NOTE: this takes the most time when running on the real robot -> around 400ms - 600 ms, but sometimes also even more
     def read_joint_positions_from_robot(self):
         """Read joint states from the robot"""
+        time_start = time.perf_counter()
         if self.sim:
             return self.joint_states_from_model()[0]
 
@@ -115,7 +117,8 @@ class AinexRobot():
          # l/r_sho_roll has an offset in the real robot
         q_real[self.robot_model.get_joint_id('r_sho_roll')] += 1.4
         q_real[self.robot_model.get_joint_id('l_sho_roll')] -= 1.4
-
+        time_end = time.perf_counter()
+        self.node.get_logger().debug(f"Time to read joint positions from robot: {(time_end - time_start)*1000.0:.2f} ms")
         return q_real
    
     def publish_joint_states(self):
