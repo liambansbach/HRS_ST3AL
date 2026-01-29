@@ -225,6 +225,8 @@ class CameraSubscriber(Node):
         else:
             self.frame = frame
 
+        #self.frame = frame
+
         # Keep numpy frame for display
         self.undist = self.frame
 
