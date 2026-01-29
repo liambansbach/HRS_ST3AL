@@ -19,7 +19,7 @@ Notes:
   - QoS is BEST_EFFORT with depth=1 for sensor-style topics.
   - If calibration cannot be loaded, frames are forwarded without undistortion.
 
-Group B:
+HRS 2025 - Group B:
     Liam Bansbach
     Marius Moe Rena
     Niklas Peter

@@ -18,6 +18,13 @@ Notes:
   - The callback is rate-limited to ~30 Hz using `time.monotonic_ns()`.
   - Uses MediaPipe Tasks PoseLandmarker in IMAGE mode (per-frame detection).
   - Publishes only when both shoulders have sufficient visibility (> 0.3).
+
+HRS 2025 - Group B:
+    Liam Bansbach
+    Marius Moe Rena
+    Niklas Peter
+    Tobias Töws
+    Maalon Jochmann
 """
 
 import os
@@ -130,10 +137,15 @@ class MPPose(Node):
             "Pose Recognition Node started! Listening to /image_raw/"
         )
 
+        # Optional: set a default window size (window already created above)
+        cv2.resizeWindow("POSE", 800, 600)
 # <<<<<<< HEAD
 #         cv2.namedWindow("POSE", cv2.WINDOW_NORMAL)
 #         cv2.resizeWindow("POSE", 800, 600)
 
+    def image_callback(self, msg: Image) -> None:
+        """
+        Run pose estimation on incoming frames (rate-limited) and publish an upper-body rig.
 #     def image_callback(self, msg: Image):
 # =======
 # <<<<<<< HEAD
