@@ -453,6 +453,7 @@ class ImitationControlNode(Node):
         el_yaw_target_right = msg.elbow_yaw_target_right
 
         t_before_read_q = perf_counter_ns()
+        # NOTE for reducing inference time: read only necessary joints? -> when do we need all joints?
         q = self.ainex_robot.read_joint_positions_from_robot()
         t_read_q = perf_counter_ns()
 
