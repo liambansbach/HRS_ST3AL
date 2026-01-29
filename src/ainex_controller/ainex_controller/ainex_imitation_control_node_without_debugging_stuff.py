@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 import pinocchio as pin
 import rclpy
@@ -152,10 +150,10 @@ class ImitationControlNode(Node):
 
         self.homogeneous_transform_params_left = left_params
         self.homogeneous_transform_params_right = right_params
-        self._perf_counter_ns = time.perf_counter_ns
-        self._nmpc_solve_time_ns = 0
-        self._nmpc_solve_time_accum_ns = 0
-        self._nmpc_solve_time_samples = 0
+
+
+
+        # TODO add timer to measure the computation time of the NMPC solver
         # Create hand controllers for left and right hands
         self.left_hand_controller = NMPC(
             self.T_HORIZON_s,
@@ -468,9 +466,6 @@ class ImitationControlNode(Node):
             self.get_logger().warn("Skipping NMPC step due to non-finite reference targets.")
             return
 
-        # Solve NMPC for left and right arms
-        perf_counter_ns = self._perf_counter_ns
-        t0 = perf_counter_ns()
         optimal_solution_left = self.left_hand_controller.solve_nmpc(
             q[self.ainex_robot.left_arm_ids],
             refs_left.tolist()
@@ -480,13 +475,6 @@ class ImitationControlNode(Node):
             q[self.ainex_robot.right_arm_ids],
             refs_right.tolist()
         )
-        solve_time_ns = perf_counter_ns() - t0
-        self._nmpc_solve_time_ns = solve_time_ns
-        self._nmpc_solve_time_accum_ns += solve_time_ns
-        self._nmpc_solve_time_samples += 1
-        # NOTE: time to solve both NMPC is about 2-4 ms on robot, but for the first call it's around 600ms
-        # -> hence this is probably not the bottleneck for real-time control
-        self.get_logger().info(f"NMPC solve time: {solve_time_ns / 1e6:.2f} ms")
 
         # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 
         # here in such a way that robot isnt able to reach behind himself?

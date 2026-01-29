@@ -40,6 +40,7 @@ class HumanToAinex(Node):
 
         self.robot_full_reach_length = 0.187 
         self.get_logger().info('Human to Robot basis tranformation node started! Listening to "/mp_pose/upper_body_rig"')
+        self._eps = 1e-6
 
     def bodypose_cb(self, msg: UpperbodyPose):
         """ 
@@ -106,10 +107,6 @@ class HumanToAinex(Node):
             wrist.y - shoulder.y,
             wrist.z - shoulder.z
         ])
-
-        shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
-        shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
-
         shoulder_elbow_mp = np.array([
             elbow.x - shoulder.x,
             elbow.y - shoulder.y,
@@ -120,7 +117,14 @@ class HumanToAinex(Node):
             wrist.y - elbow.y,
             wrist.z - elbow.z
         ])
-        reaching_factor = shoulder_wrist_mp_len / (np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp))
+
+        shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
+        # checking for zero-length vector to avoid division by zero
+        shoulder_wrist_mp_unit = np.zeros(3) if shoulder_wrist_mp_len < self._eps else shoulder_wrist_mp / shoulder_wrist_mp_len
+
+        denom = np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp)
+        # checking for zero-length denom to avoid division by zero
+        reaching_factor = 0.0 if denom < self._eps else shoulder_wrist_mp_len / denom
 
         full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
         wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
@@ -151,7 +155,10 @@ class HumanToAinex(Node):
         ])
 
         shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
-        shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
+        if shoulder_wrist_mp_len < self._eps:
+            shoulder_wrist_mp_unit = np.zeros(3)
+        else:
+            shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
 
         shoulder_elbow_mp = np.array([
             elbow.x - shoulder.x,
@@ -163,7 +170,8 @@ class HumanToAinex(Node):
             wrist.y - elbow.y,
             wrist.z - elbow.z
         ])
-        reaching_factor = shoulder_wrist_mp_len / (np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp))
+        denom = np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp)
+        reaching_factor = 0.0 if denom < self._eps else shoulder_wrist_mp_len / denom
 
         full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
         wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
@@ -194,7 +202,7 @@ class HumanToAinex(Node):
         )
         # not sure about this:
         L1 = np.linalg.norm(shoulder_elbow_robot)
-        L2 = np.linalg.norm(elbow_wrist_robot)    
+        L2 = np.linalg.norm(elbow_wrist_robot)
         if side == "left":
             def left_shoulder_to_elbow(vec):
                 x, y, z = vec
@@ -217,7 +225,6 @@ class HumanToAinex(Node):
                 # maybe the +- infront of sqrt should be considered somehow to reach every position?
                 # positive sign => elbow BELOW the shoulder seems to work
                 # negative sign => elbow ABOVE the shoulder seems to work
-                #TODO implement a way to determine if elbow is above or below shoulder to choose correct sign for theta_4 -> seems to work quite well now
                 #theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
                 sqrt_term = np.sqrt(A**2 + B**2)
                 elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
@@ -253,18 +260,32 @@ class HumanToAinex(Node):
 
                 # positive sign => elbow BELOW the shoulder seems to work
                 # negative sign => elbow ABOVE the shoulder seems to work
-                theta_4 = np.arctan2(np.sqrt(L2**2 - proj**2), -proj)
+                if L2 < self._eps:
+                    return 0.0, 0.0
+                proj_clamped = np.clip(proj, -L2, L2)
+                if abs(proj - proj_clamped) > self._eps:
+                    self.get_logger().warn(
+                        f"proj out of range (proj={proj:.6f}, L2={L2:.6f}), clamping for theta_4."
+                    )
+                proj = proj_clamped
+                radicand = L2**2 - proj**2
+                if radicand < 0.0:
+                    self.get_logger().warn(
+                        f"Negative radicand for theta_4 sqrt (radicand={radicand:.6f}); clamping to 0."
+                    )
+                    radicand = 0.0
+                sqrt_term = np.sqrt(radicand)
+                theta_4 = np.arctan2(sqrt_term, -proj)
 
                 # with non inverted theta_3, this produces shit
                 # with inverted theta_3, this produces arm bending inwards (to the right) -> could be correct!!! -> test tomorrow on real robot
                 # what works: arm inside aka both arms on the thighs -> arm bends inwards (to the right)
                 # what doesnt work: bending arm upwards with elbow bend -> arm bends outwards (to the left) -> seems like theta_4 sign is still wrong -> could this come from an unreachable position?
-                theta_4 = np.arctan2(-np.sqrt(L2**2 - proj**2), -proj)
+                theta_4 = np.arctan2(-sqrt_term, -proj)
 
-                # TODO first validate this approach for the left arm, then test it on this arm: -> test this more tomorrow on real robot
                 # checking if arm is above shoulder to choose correct sign for theta_4:
                 elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
-                sqrt_term = np.sqrt(L2**2 - proj**2)
+                # reuse sqrt_term from clamped radicand
                 theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, -proj)
 
                 """
@@ -274,7 +295,7 @@ class HumanToAinex(Node):
                 - however, with negative theta_4, the wrist turns inwards instead of outwards for positions where the elbow is above the shoulder 
                 """
 
-                self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
+                #self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
                 return theta_3, theta_4
             
             sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
