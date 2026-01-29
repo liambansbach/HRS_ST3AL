@@ -1,17 +1,39 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionClient
 from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 import pinocchio as pin
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Dict
 
+from tf2_ros import TransformListener, Buffer
+
+from ainex_interfaces.action import RecordDemo  # server action :contentReference[oaicite:2]{index=2}
 
 from ainex_controller.ainex_model import AiNexModel
 from ainex_controller.ainex_robot import AinexRobot
 from ainex_controller.ainex_hand_controller import HandController
+
+
+# -----------------------------
+# TF / Math helpers
+# -----------------------------
+def quat_to_rotmat(x, y, z, w):
+    n = x*x + y*y + z*z + w*w
+    if n < 1e-12:
+        return np.eye(3, dtype=np.float64)
+    s = 2.0 / n
+    return np.array(
+        [
+            [1 - (y*y + z*z) * s, (x*y - z*w) * s,     (x*z + y*w) * s],
+            [(x*y + z*w) * s,     1 - (x*x + z*z) * s, (y*z - x*w) * s],
+            [(x*z - y*w) * s,     (y*z + x*w) * s,     1 - (x*x + y*y) * s],
+        ],
+        dtype=np.float64,
+    )
 
 
 @dataclass
@@ -29,7 +51,23 @@ class StackCubesNode(Node):
 
         self.dt = 0.05  # 20 Hz
 
-        # --- Robot model / controller setup
+        # -----------------------------
+        # Params
+        # -----------------------------
+        # True: run built-in test motions at startup
+        # False: fetch events from server and then execute
+        self.declare_parameter("use_test_sequence", False)
+        self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
+
+        # Action goal params (same as your client) :contentReference[oaicite:3]{index=3}
+        self.declare_parameter("min_world_states", 3)
+        self.declare_parameter("idle_timeout_sec", 10.0)
+        self.min_world_states = int(self.get_parameter("min_world_states").value)
+        self.idle_timeout_sec = float(self.get_parameter("idle_timeout_sec").value)
+
+        # -----------------------------
+        # Robot model / controller setup
+        # -----------------------------
         pkg = get_package_share_directory("ainex_description")
         urdf_path = pkg + "/urdf/ainex.urdf"
 
@@ -39,13 +77,15 @@ class StackCubesNode(Node):
         self.left_hand_controller = HandController(self, self.robot_model, arm_side="left")
         self.right_hand_controller = HandController(self, self.robot_model, arm_side="right")
 
-        # Arm DOFs for zero commands
+        # Arm DOFs for hold/zero commands
         self.left_dof = len(self.robot_model.get_arm_ids("left"))
         self.right_dof = len(self.robot_model.get_arm_ids("right"))
         self.zero_left = np.zeros(self.left_dof)
         self.zero_right = np.zeros(self.right_dof)
 
-        # --- Initial pose
+        # -----------------------------
+        # Initial pose
+        # -----------------------------
         self.init_robot_pose = {
             "head_tilt": 0, "head_pan": 0,
             "r_gripper": 0, "l_gripper": 0,
@@ -61,27 +101,46 @@ class StackCubesNode(Node):
             "r_ank_roll": 0, "l_ank_roll": 0,
         }
 
-        # --- Sequencer data
+        # -----------------------------
+        # TF (cube poses)
+        # -----------------------------
+        self.base_frame = "base_link"
+        self.cube_tf_prefix = "hrs_cube_"  # your projector TF naming :contentReference[oaicite:4]{index=4}
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.cube_pos: Dict[str, Optional[np.ndarray]] = {"red": None, "green": None, "blue": None}
+        self.create_timer(1.0 / 20.0, self._update_cube_positions)
+
+        # -----------------------------
+        # Sequencer
+        # -----------------------------
         self.sequence: List[HandAction] = []
         self.seq_index: int = 0
         self.action_started: bool = False
         self.action_start_time: Optional[float] = None
 
-        # --- Mode/phase control
-        # phases: "init" -> "idle" <-> "run_sequence"
-        self.phase: str = "init"
-        self.autorun: bool = True        # if True: start automatically when sequence becomes available
-        self.clear_sequence_on_finish = True  # convenient default
-
-        # one-time init flag
+        self.phase: str = "init"      # "init" -> "idle" <-> "run_sequence"
+        self.autorun: bool = True
+        self.clear_sequence_on_finish = True
         self.did_init = False
 
-        # timer-driven control loop
-        ASSERT_DT = self.dt
         self.timer = self.create_timer(self.dt, self.control_loop)
 
-        # Optional: create an initial test sequence (you can remove this later)
-        self.enqueue_sequence(self.build_test_sequence())
+        # -----------------------------
+        # ActionClient to server
+        # -----------------------------
+        self.client = ActionClient(self, RecordDemo, "record_demo")
+        self.waiting_for_server_result = False
+
+        # Startup behavior:
+        if self.use_test_sequence:
+            self.enqueue_sequence(self.build_test_sequence(), replace=True)
+            self.get_logger().info("Loaded TEST sequence (use_test_sequence:=True).")
+        else:
+            # Immediately start recording on the server; when result comes, execute it.
+            self.start_recording_and_wait_result()
 
     # -----------------------------
     # Time helpers
@@ -109,10 +168,42 @@ class StackCubesNode(Node):
         return T
 
     # -----------------------------
-    # Sequence API (call these later from other code)
+    # TF helpers
+    # -----------------------------
+    def _can_T(self, parent, child) -> bool:
+        return self.tf_buffer.can_transform(parent, child, rclpy.time.Time())
+
+    def _get_T(self, parent, child):
+        if not self._can_T(parent, child):
+            return None
+        tf = self.tf_buffer.lookup_transform(parent, child, rclpy.time.Time())
+        R = quat_to_rotmat(
+            tf.transform.rotation.x,
+            tf.transform.rotation.y,
+            tf.transform.rotation.z,
+            tf.transform.rotation.w,
+        )
+        t = np.array(
+            [tf.transform.translation.x,
+             tf.transform.translation.y,
+             tf.transform.translation.z],
+            dtype=np.float64,
+        )
+        return R, t
+
+    def _update_cube_positions(self):
+        for c in ["red", "green", "blue"]:
+            frame = self.cube_tf_prefix + c
+            T = self._get_T(self.base_frame, frame)
+            self.cube_pos[c] = None if T is None else T[1]
+
+    def get_cube_position(self, color: str) -> Optional[np.ndarray]:
+        return self.cube_pos.get(color, None)
+
+    # -----------------------------
+    # Sequence API
     # -----------------------------
     def enqueue_sequence(self, actions: List[HandAction], replace: bool = False):
-        """Add a sequence of actions. If replace=True, overwrites any pending actions."""
         if replace:
             self.sequence = []
             self.seq_index = 0
@@ -121,10 +212,9 @@ class StackCubesNode(Node):
 
         if actions:
             self.sequence.extend(actions)
-            self.get_logger().info(f"Enqueued {len(actions)} actions (queue size now {len(self.sequence) - self.seq_index}).")
-
-        # If we're idle and autorun is enabled, start automatically next tick
-        # (we don't flip phase here to keep callback logic simple + deterministic)
+            self.get_logger().info(
+                f"Enqueued {len(actions)} actions (pending now {len(self.sequence) - self.seq_index})."
+            )
 
     def clear_sequence(self):
         self.sequence = []
@@ -162,47 +252,134 @@ class StackCubesNode(Node):
         if self.clear_sequence_on_finish:
             self.clear_sequence()
         else:
-            # keep history, just set index to end
             self.seq_index = len(self.sequence)
             self.action_started = False
             self.action_start_time = None
         self.phase = "idle"
+        self.move_to_initial_position()
 
     # -----------------------------
-    # Example sequence builder
+    # Test sequence
     # -----------------------------
     def build_test_sequence(self) -> List[HandAction]:
         return [
-            HandAction(hand="left",  rel_or_abs="rel", target_translation=np.array([0.0,  0.10, 0.0]), duration=3.0, wait_after=5.0),
-            HandAction(hand="right", rel_or_abs="abs", target_translation=np.array([0.0, -0.15, 0.0]), duration=3.0, wait_after=5.0),
-            HandAction(hand="right", rel_or_abs="rel", target_translation=np.array([0.0,  0.00, 0.1]), duration=2.0, wait_after=2.0),
+            HandAction(hand="left",  rel_or_abs="rel", target_translation=np.array([0.00,  0.10, 0.00]), duration=3.0, wait_after=2.0),
+            HandAction(hand="right", rel_or_abs="rel", target_translation=np.array([0.00, -0.10, 0.00]), duration=3.0, wait_after=2.0),
+            HandAction(hand="left",  rel_or_abs="rel", target_translation=np.array([0.00, -0.10, 0.00]), duration=3.0, wait_after=2.0),
         ]
+
+    # -----------------------------
+    # SERVER: start recording, wait for result, translate to HandActions
+    # -----------------------------
+    def start_recording_and_wait_result(self):
+        if self.waiting_for_server_result:
+            self.get_logger().warn("Already waiting for a server result; ignoring.")
+            return
+
+        self.get_logger().info("Waiting for action server 'record_demo'...")
+        if not self.client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("Action server 'record_demo' not available.")
+            return
+
+        goal = RecordDemo.Goal()
+        goal.min_world_states = int(self.min_world_states)
+        goal.idle_timeout_sec = float(self.idle_timeout_sec)
+
+        self.get_logger().info(
+            f"Sending RecordDemo goal (min_world_states={goal.min_world_states}, idle_timeout_sec={goal.idle_timeout_sec})"
+        )
+
+        self.waiting_for_server_result = True
+        future = self.client.send_goal_async(goal)
+        future.add_done_callback(self._goal_response_cb)
+
+    def _goal_response_cb(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error("Goal rejected by server.")
+            self.waiting_for_server_result = False
+            return
+
+        self.get_logger().info("Server accepted goal. Waiting for result...")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._result_cb)
+
+    def _result_cb(self, future):
+        status = future.result().status
+        res = future.result().result
+
+        self.get_logger().info(f"=== SERVER RESULT status={status} session_id={res.session_id} ===")
+        self.get_logger().info(f"Events received: {len(res.events)}")
+
+        # Build a simple action sequence from events:
+        actions = self._events_to_left_arm_actions(res.events)
+
+        if not actions:
+            self.get_logger().warn("No executable actions built from server events -> staying idle.")
+        else:
+            self.enqueue_sequence(actions, replace=True)
+            self.get_logger().info("Loaded actions from server -> will execute sequence.")
+
+        self.waiting_for_server_result = False
+
+    def _events_to_left_arm_actions(self, events) -> List[HandAction]:
+        """
+        VERY SIMPLE TEST:
+        For each event in order:
+          - move LEFT arm to current 3D TF position of that cube (abs)
+        """
+        out: List[HandAction] = []
+
+        for e in events:
+            cube_id = str(e.cube_id)  # expected: "red"/"green"/"blue" :contentReference[oaicite:5]{index=5}
+            p = self.get_cube_position(cube_id)
+
+            if p is None:
+                self.get_logger().warn(
+                    f"Event {e.type} for cube '{cube_id}', but TF '{self.cube_tf_prefix + cube_id}' not available. Skipping."
+                )
+                continue
+
+            # tiny offset in z so it doesn't collide immediately (tune later)
+            target = p + np.array([0.0, 0.0, 0.05])
+
+            out.append(
+                HandAction(
+                    hand="left",
+                    rel_or_abs="abs",
+                    target_translation=target,
+                    duration=3.0,
+                    wait_after=1.0,
+                )
+            )
+
+            self.get_logger().info(f"Built action: left -> {cube_id} @ {target.tolist()} (from event {e.type})")
+
+        return out
 
     # -----------------------------
     # Main loop (timer)
     # -----------------------------
     def control_loop(self):
-        # Always compute commands each tick; by default: hold position (zero velocities)
         v_left = self.zero_left
         v_right = self.zero_right
 
-        # ---- Init phase
+        # Init once
         if not self.did_init:
             self.move_to_initial_position()
             self.did_init = True
             self.phase = "idle"
             self.get_logger().info("Init done -> idle.")
-            # Still update robot once with zeros (hold)
             self.ainex_robot.update(v_left, v_right, self.dt)
             return
 
-        # ---- Idle: do nothing unless we have pending actions and autorun enabled
+        # Idle
         if self.phase == "idle":
             if self.autorun and self.has_pending_actions():
                 self.phase = "run_sequence"
                 self.get_logger().info("Idle -> run_sequence (pending actions detected).")
 
-        # ---- Run sequence
+        # Run sequence (sequential)
         if self.phase == "run_sequence":
             if not self.has_pending_actions():
                 self.finish_sequence()

@@ -46,8 +46,8 @@ class AinexRobot():
         self.node.get_logger().warn(f"Moved to q_init = {self.q}")
 
         if not self.sim:
-            self.send_cmd(self.q, 3.0)
-            time.sleep(3.0)
+            self.send_cmd(self.q, 5.0)
+            time.sleep(5.0)
         self.publish_joint_states()
         self.robot_model.update_model(self.q, self.v)
         
