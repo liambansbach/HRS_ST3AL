@@ -80,7 +80,7 @@ class StackCubesNode(Node):
         self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
 
         # Let you switch RViz-only vs real robot
-        self.declare_parameter("sim", True)
+        self.declare_parameter("sim", False)
         self.sim: bool = bool(self.get_parameter("sim").value)
 
         # Base frame naming mess: URDF uses body_link; some nodes publish base_link. But its the same...

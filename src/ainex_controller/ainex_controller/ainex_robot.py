@@ -31,7 +31,7 @@ class AinexRobot():
         self.robot_model.update_model(self.q, self.v)
 
        # self.joint_states_pub = self.node.create_publisher(JointState, 'ainex_joint_states', 10)
-        topic = 'joint_states' if self.sim else 'ainex_joint_states'
+        topic = 'joint_states' if self.sim else 'joint_states'
         self.joint_states_pub = self.node.create_publisher(JointState, topic, 10)
 
         # publish initial joint states
