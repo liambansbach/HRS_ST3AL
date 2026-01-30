@@ -48,8 +48,8 @@ class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
 
-        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 10).value #was 1 before testing around
-        self.N = self.declare_parameter('N', 2).value #was 10 before testing around
+        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value #was 1 before testing around
+        self.N = self.declare_parameter('N', 5).value #was 10 before testing around
         self.n_joints = self.declare_parameter('n_joints', 4).value
         # 7 reference values: [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
         self.n_ref_vals = self.declare_parameter('n_ref_vals', 7).value
@@ -93,15 +93,17 @@ class ImitationControlNode(Node):
         self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -2.09, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
         self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, 2.09, 2.09, 0.3]).value
 
+        self.sim = self.declare_parameter('sim', True).value
+
         self.dt = self.T_HORIZON_s / self.N
 
         pkg = get_package_share_directory('ainex_description') # get package path
         self.urdf_path = pkg + '/urdf/ainex.urdf'
         self.robot_model = AiNexModel(self, self.urdf_path)
-
+        
         self.get_logger().info("TESTING: Ainex Model loaded.")
         # Create AinexRobot instance
-        self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=False)
+        self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=self.sim)
         self.get_logger().info("TESTING: Ainex Robot interface initialized.")
         # manual homogeneous transform parameters for FK (to be replaced by URDF-extracted version)
         # important NOTE: this seems to fit for 3D, but not 100% sure (got it by testing different values)
@@ -283,7 +285,30 @@ class ImitationControlNode(Node):
             'r_el_pitch': 'y',   # axis="0 -1 0"
             'r_el_yaw': 'z',      # axis="0 0 1"
         }
-        
+        if self.sim:
+            # In simulation, the left arm's sho_roll axis is inverted
+            known_axes = {
+                'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
+                'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
+                'l_el_pitch': '-y',    # axis="0 1 0" (left arm bends)
+                'l_el_yaw': '-z',     # axis="0 0 -1" (left side)
+                'r_sho_pitch': '-y',  # axis="0 -1 0" in URDF (right side)
+                'r_sho_roll': 'x',    # axis="1 0 0"
+                'r_el_pitch': 'y',   # axis="0 -1 0"
+                'r_el_yaw': 'z',      # axis="0 0 1"
+            }        
+        else: 
+            # Real Robot:
+            known_axes = {
+            'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
+            'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
+            'l_el_pitch': '-y',    # axis="0 1 0" (left arm bends)
+            'l_el_yaw': '-z',     # axis="0 0 -1" (left side)
+            'r_sho_pitch': '-y',  # axis="0 -1 0" in URDF (right side)
+            'r_sho_roll': 'x',    # axis="1 0 0"
+            'r_el_pitch': 'y',   # axis="0 -1 0"
+            'r_el_yaw': 'z',      # axis="0 0 1"
+            }
         params = {}
         for i, joint_name in enumerate(joint_names):
             joint_id = model.getJointId(joint_name)
@@ -509,25 +534,12 @@ class ImitationControlNode(Node):
             [x_right, y_right, z_right]
         )
         t_publish = perf_counter_ns()
-        #self.get_logger().info("here the time printing should happen:_")
-        # with this get_logger the imitation doesnt work, dont know why?
-        # self.get_logger().info(
-        #     "Timing (ms): read_q=%.2f left_nmpc=%.2f right_nmpc=%.2f update=%.2f publish=%.2f total=%.2f",
-        #     (t_read_q - t_before_read_q) / 1e6,
-        #     (t_left_nmpc - t_before_left_nmpc) / 1e6,
-        #     (t_right_nmpc - t_left_nmpc) / 1e6,
-        #     (t_update - t_right_nmpc) / 1e6,
-        #     (t_publish - t_update) / 1e6,
-        #     (t_publish - t_start) / 1e6,
-        # )
 
-        print(                  "Timing (ms): read_q=%.2f left_nmpc=%.2f right_nmpc=%.2f update=%.2f publish=%.2f total=%.2f",
-            (t_read_q - t_before_read_q) / 1e6,
-            (t_left_nmpc - t_before_left_nmpc) / 1e6,
-            (t_right_nmpc - t_left_nmpc) / 1e6,
-            (t_update - t_right_nmpc) / 1e6,
-            (t_publish - t_update) / 1e6,
-            (t_publish - t_start) / 1e6,)
+        self.get_logger().info(
+            f"Timing (ms): read_q={(t_read_q - t_before_read_q) / 1e6:.2f} left_nmpc={(t_left_nmpc - t_before_left_nmpc) / 1e6:.2f} right_nmpc={(t_right_nmpc - t_left_nmpc) / 1e6:.2f} update={(t_update - t_right_nmpc) / 1e6:.2f} publish={(t_publish - t_update) / 1e6:.2f} total={(t_publish - t_start) / 1e6:.2f}",
+        )
+
+     
 
     def move_to_inital_position(self):
         # Home position defined in urdf/pinocchio model
