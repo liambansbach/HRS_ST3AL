@@ -123,7 +123,7 @@ class HandController():
         # and keep only the columns corresponding to the arm joints.
         # You can obtain the arm joint indices using AinexModel.get_arm_ids(). 
         J = self.robot_model.left_hand_jacobian() if self.arm_side == 'left' else self.robot_model.right_hand_jacobian()
-        J_pos = J[:3, :][:, self.robot_model.get_arm_ids(self.arm_side)]
+        J_pos = J[:3, :][:, self.robot_model.get_arm_v_ids(self.arm_side)]
 
         ## Check manipulability to prevent singularities
         # TODO: calculate the manipulability index with the task Jacobian J_pos.

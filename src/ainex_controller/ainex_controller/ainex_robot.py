@@ -6,7 +6,7 @@ from ainex_motion.joint_controller import JointController
 from sensor_msgs.msg import JointState
 
 class AinexRobot():
-    def __init__(self, node: Node, model: AiNexModel, dt: float, sim: bool = True):
+    def __init__(self, node: Node, model: AiNexModel, dt: float, sim: bool = False):
         """ Visualize simulation and interface with real robot"""
         self.node = node
         self.sim = sim
@@ -31,7 +31,7 @@ class AinexRobot():
         self.robot_model.update_model(self.q, self.v)
 
        # self.joint_states_pub = self.node.create_publisher(JointState, 'ainex_joint_states', 10)
-        topic = 'joint_states' if self.sim else 'joint_states'
+        topic = 'joint_states' if self.sim else 'ainex_joint_states'
         self.joint_states_pub = self.node.create_publisher(JointState, topic, 10)
 
         # publish initial joint states
@@ -39,6 +39,21 @@ class AinexRobot():
 
         self.left_arm_ids = self.robot_model.get_arm_ids("left")
         self.right_arm_ids = self.robot_model.get_arm_ids("right")
+
+        self._hw_map = {
+            'l_sho_pitch': {'sign': -1.0, 'offset': 0.0},
+            'r_sho_pitch': {'sign':  1.0, 'offset': 0.0},
+
+            'l_el_pitch':  {'sign': -1.0, 'offset': 0.0},
+            'r_el_pitch':  {'sign':  1.0, 'offset': 0.0},
+
+            'l_el_yaw':    {'sign':  1.0, 'offset': 0.0},
+            'r_el_yaw':    {'sign':  1.0, 'offset': 0.0},
+
+            # offsets (keep exactly same value in both directions)
+            'r_sho_roll':  {'sign':  1.0, 'offset': +1.45},
+            'l_sho_roll':  {'sign':  1.0, 'offset': -1.45},
+        }
 
     def move_to_initial_position(self, q_init: np.ndarray = None):
         """Move robot to initial position."""
@@ -81,11 +96,24 @@ class AinexRobot():
 
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
+        
         q_cmd[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= 1.0
+
+        q_cmd[self.robot_model.get_joint_id('l_el_pitch')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('r_el_pitch')] *= 1.0
+
+        q_cmd[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        q_cmd[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        
         # l/r_sho_roll has an offset in the real robot
-        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] -= 1.4
-        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] += 1.4
+        
+        
+        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] += 1.45
+        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] -= 1.45
+
+        #q_cmd[self.robot_model.get_joint_id('r_sho_roll')] *= -1.0
+        #q_cmd[self.robot_model.get_joint_id('l_sho_roll')] *= -1.0
         
         self.joint_controller.setJointPositions(self.joint_names, q_cmd.tolist(), dt, unit="rad")
 
@@ -95,11 +123,27 @@ class AinexRobot():
 
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
-        q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+
+        #q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
+        #q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+
          # l/r_sho_roll has an offset in the real robot
-        q_real[self.robot_model.get_joint_id('r_sho_roll')] += 1.4
-        q_real[self.robot_model.get_joint_id('l_sho_roll')] -= 1.4
+
+        #q_real[self.robot_model.get_joint_id('r_sho_roll')] += 1.4
+        #q_real[self.robot_model.get_joint_id('l_sho_roll')] -= 1.4
+        q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= 1.0
+        q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+
+        q_real[self.robot_model.get_joint_id('l_el_pitch')] *= 1.0
+        q_real[self.robot_model.get_joint_id('r_el_pitch')] *= -1.0      
+        q_real[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        q_real[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        
+        # l/r_sho_roll has an offset in the real robot
+        
+        
+        q_real[self.robot_model.get_joint_id('r_sho_roll')] -= 1.45
+        q_real[self.robot_model.get_joint_id('l_sho_roll')] += 1.45
 
         return q_real
     
@@ -147,11 +191,11 @@ class AinexRobot():
     def close_hand(self, which: str = "both", duration: float = 1.0):
         # NOTE: pick “closed” values; placeholders:
         if which == "both":
-            self.set_grippers(l_pos=0.0, r_pos=0.0, duration=duration)
+            self.set_grippers(l_pos=-0.4, r_pos=0.4, duration=duration)
         elif which == "left":
-            self.set_grippers(l_pos=0.0, r_pos=None, duration=duration)
+            self.set_grippers(l_pos=-0.4, r_pos=None, duration=duration)
         elif which == "right":
-            self.set_grippers(l_pos=None, r_pos=0.0, duration=duration)
+            self.set_grippers(l_pos=None, r_pos=0.4, duration=duration)
         else:
             self.node.get_logger().warn(f"close_hand: unknown which='{which}'")
 

@@ -118,12 +118,12 @@ class StackCubesNode(Node):
         # Initial pose
         # -----------------------------
         self.init_robot_pose = {
-            "head_tilt": -0.5, "head_pan": 0,
+            "head_tilt": -0.65, "head_pan": 0,
             "r_gripper": 0, "l_gripper": 0,
-            "r_el_yaw": 1.58, "l_el_yaw": -1.58,
-            "r_el_pitch": 0, "l_el_pitch": 0,
-            "r_sho_roll": 1.4, "l_sho_roll": -1.4,
-            "r_sho_pitch": 0, "l_sho_pitch": 0,
+            "r_el_yaw": 0.8, "l_el_yaw": -0.8,  # 0.8 // -0.8 +++
+            "r_el_pitch": -1.4, "l_el_pitch": -1.4, # -1.4 // -1.4 +++
+            "r_sho_roll": 0.0, "l_sho_roll": 0.0, # 0.44 // -0.44 +++
+            "r_sho_pitch": 1.57, "l_sho_pitch": 1.57, # 1.57 // 1.57 +++
             "r_hip_yaw": 0, "l_hip_yaw": 0,
             "r_hip_roll": 0, "l_hip_roll": 0,
             "r_hip_pitch": 0, "l_hip_pitch": 0,
