@@ -76,14 +76,14 @@ class StackCubesNode(Node):
         # -----------------------------
         # Params
         # -----------------------------
-        self.declare_parameter("use_test_sequence", True)
+        self.declare_parameter("use_test_sequence", True) 
         self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
 
         # Let you switch RViz-only vs real robot
         self.declare_parameter("sim", True)
         self.sim: bool = bool(self.get_parameter("sim").value)
 
-        # Base frame naming mess: URDF uses body_link; some nodes publish base_link.
+        # Base frame naming mess: URDF uses body_link; some nodes publish base_link. But its the same...
         self.declare_parameter("base_frame", "body_link")      # preferred
         self.declare_parameter("alt_base_frame", "base_link")  # fallback
         self.base_frame_pref: str = str(self.get_parameter("base_frame").value)
