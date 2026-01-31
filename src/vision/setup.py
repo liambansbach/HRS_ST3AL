@@ -36,6 +36,7 @@ setup(
             'detect_cubes_simple = vision.detect_cubes_simple:main',
             'mp_pose = vision.mp_upperbodypose_node:main',
             'identify_workspace = vision.identify_workspace:main',
+            'identify_workspace_fixed = vision.identify_workspace_fixed:main',
         ],
     },
 )

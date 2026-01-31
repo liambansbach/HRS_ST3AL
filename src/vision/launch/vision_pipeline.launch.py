@@ -24,8 +24,15 @@ def generate_launch_description():
 
             Node(
                 package='vision',
-                executable='identify_workspace',
-                name='identify_workspace',
+                executable='identify_workspace_fixed',
+                name='identify_workspace_fixed',
+                output='screen'
+            ),
+
+            Node(
+                package='ainex_controller',
+                executable='project_cubes_onto_workspace',
+                name='project_cubes_onto_workspace',
                 output='screen'
             ),
 

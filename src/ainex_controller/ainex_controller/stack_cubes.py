@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -7,7 +9,7 @@ from ament_index_python.packages import get_package_share_directory
 import numpy as np
 import pinocchio as pin
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from tf2_ros import TransformListener, Buffer
 
@@ -76,25 +78,48 @@ class StackCubesNode(Node):
         # -----------------------------
         # Params
         # -----------------------------
-        self.declare_parameter("use_test_sequence", True) 
+        self.declare_parameter("use_test_sequence", True)
         self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
 
         # Let you switch RViz-only vs real robot
-        self.declare_parameter("sim", False)
+        self.declare_parameter("sim", True)
         self.sim: bool = bool(self.get_parameter("sim").value)
 
-        # Base frame naming mess: URDF uses body_link; some nodes publish base_link. But its the same...
-        self.declare_parameter("base_frame", "body_link")      # preferred
-        self.declare_parameter("alt_base_frame", "base_link")  # fallback
-        self.base_frame_pref: str = str(self.get_parameter("base_frame").value)
-        self.base_frame_alt: str = str(self.get_parameter("alt_base_frame").value)
-        self.base_frame_active: str = self.base_frame_pref  # will auto-resolve at runtime
+        # TF frames:
+        # - workspace_projection chooses a world frame dynamically (body_link/base_link/head_tilt_link) :contentReference[oaicite:2]{index=2}
+        # - AiNexModel/HandController assume "base_link" 
+        #
+        # We therefore:
+        # 1) resolve a "world_for_cubes" frame (to read hrs_cube_*)
+        # 2) resolve a "control_base_frame" alias between base_link/body_link for targets
+        self.declare_parameter("preferred_world_frames", ["base_link", "body_link", "head_tilt_link"])
+        self.preferred_world_frames: List[str] = list(self.get_parameter("preferred_world_frames").value)
+
+        self.declare_parameter("control_base_frame", "base_link")       # what controllers expect
+        self.declare_parameter("control_base_frame_alt", "body_link")   # alias fallback
+        self.control_base_pref = str(self.get_parameter("control_base_frame").value)
+        self.control_base_alt = str(self.get_parameter("control_base_frame_alt").value)
+        self.control_base_active = self.control_base_pref
+
+        # cube tf prefix matches workspace_projection default :contentReference[oaicite:4]{index=4}
+        self.declare_parameter("cube_tf_prefix", "hrs_cube_")
+        self.cube_tf_prefix: str = str(self.get_parameter("cube_tf_prefix").value)
 
         # Action goal params (same as record_demo client)
         self.declare_parameter("min_world_states", 3)
         self.declare_parameter("idle_timeout_sec", 10.0)
         self.min_world_states = int(self.get_parameter("min_world_states").value)
         self.idle_timeout_sec = float(self.get_parameter("idle_timeout_sec").value)
+
+        # cube size (meters)
+        self.declare_parameter("cube_size", 0.05)
+        self.cube_size = float(self.get_parameter("cube_size").value)
+
+        # Tunables for stack planner
+        self.declare_parameter("z_above", 0.10)
+        self.declare_parameter("z_grasp", 0.02)
+        self.declare_parameter("z_lift", 0.12)
+        self.declare_parameter("place_clear", 0.10)
 
         # -----------------------------
         # Robot model / controller setup
@@ -118,12 +143,12 @@ class StackCubesNode(Node):
         # Initial pose
         # -----------------------------
         self.init_robot_pose = {
-            "head_tilt": -0.65, "head_pan": 0,
+            "head_tilt": -0.3, "head_pan": 0, # -0.65 // 0
             "r_gripper": 0, "l_gripper": 0,
-            "r_el_yaw": 0.8, "l_el_yaw": -0.8,  # 0.8 // -0.8 +++
-            "r_el_pitch": -1.4, "l_el_pitch": -1.4, # -1.4 // -1.4 +++
-            "r_sho_roll": 0.0, "l_sho_roll": 0.0, # 0.44 // -0.44 +++
-            "r_sho_pitch": 1.57, "l_sho_pitch": 1.57, # 1.57 // 1.57 +++
+            "r_el_yaw": 0.8, "l_el_yaw": -0.8,
+            "r_el_pitch": -1.4, "l_el_pitch": -1.4,
+            "r_sho_roll": 0.0, "l_sho_roll": 0.0,
+            "r_sho_pitch": 1.57, "l_sho_pitch": 1.57,
             "r_hip_yaw": 0, "l_hip_yaw": 0,
             "r_hip_roll": 0, "l_hip_roll": 0,
             "r_hip_pitch": 0, "l_hip_pitch": 0,
@@ -135,12 +160,12 @@ class StackCubesNode(Node):
         # -----------------------------
         # TF (cube poses)
         # -----------------------------
-        self.cube_tf_prefix = "hrs_cube_"  # hrs_cube_red/green/blue
-
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.cube_pos: Dict[str, Optional[np.ndarray]] = {"red": None, "green": None, "blue": None}
+
+        # update cube positions
         self.create_timer(1.0 / 20.0, self._update_cube_positions)
 
         # -----------------------------
@@ -156,12 +181,9 @@ class StackCubesNode(Node):
         self.clear_sequence_on_finish = True
         self.did_init = False
 
-        # "ready to stack" latch: set when server result arrives (or immediately in test mode)
+        # "ready to stack" latch
         self.ready_to_stack: bool = False
         self.pending_events: List[ManipulationEvent] = []
-
-        # cube size
-        self.cube_size = 0.05  # 5cm
 
         # main loop
         self.timer = self.create_timer(self.dt, self.control_loop)
@@ -210,14 +232,19 @@ class StackCubesNode(Node):
     # -----------------------------
     # TF helpers
     # -----------------------------
-    def _can_T(self, parent, child) -> bool:
-        return self.tf_buffer.can_transform(parent, child, rclpy.time.Time())
+    def _can_T(self, target, source) -> bool:
+        # target <- source
+        return self.tf_buffer.can_transform(target, source, rclpy.time.Time())
 
-    def _get_T(self, parent, child):
-        if not self._can_T(parent, child):
+    def _lookup_RT(self, target, source) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Returns (R, t) mapping a point from 'source' into 'target':
+            p_target = R @ p_source + t
+        """
+        if not self._can_T(target, source):
             return None
-        tf = self.tf_buffer.lookup_transform(parent, child, rclpy.time.Time())
-        R = quat_to_rotmat(
+        tf = self.tf_buffer.lookup_transform(target, source, rclpy.time.Time())
+        Rm = quat_to_rotmat(
             tf.transform.rotation.x,
             tf.transform.rotation.y,
             tf.transform.rotation.z,
@@ -229,41 +256,76 @@ class StackCubesNode(Node):
              tf.transform.translation.z],
             dtype=np.float64,
         )
-        return R, t
+        return Rm, t
 
-    def _resolve_base_frame(self) -> str:
+    def _choose_world_frame_for_cubes(self) -> Optional[str]:
         """
-        Robustly resolve whether cubes live under body_link or base_link.
-        We pick the first one that can transform to any cube frame.
+        Match workspace_projection behavior: pick first world frame that can transform to a cube frame. :contentReference[oaicite:5]{index=5}
         """
-        # If already resolved and still valid, keep it.
         test_child = self.cube_tf_prefix + "red"
-        if self._can_T(self.base_frame_active, test_child):
-            return self.base_frame_active
+        for w in self.preferred_world_frames:
+            if self._can_T(w, test_child):
+                return w
+        return None
 
-        # Try preferred
-        if self._can_T(self.base_frame_pref, test_child):
-            if self.base_frame_active != self.base_frame_pref:
-                self.get_logger().warn(f"Resolved base frame -> '{self.base_frame_pref}'")
-            self.base_frame_active = self.base_frame_pref
-            return self.base_frame_active
+    def _resolve_control_base_frame(self) -> str:
+        """
+        Controllers / model assume base_link, but URDF might be body_link.
+        We treat them as aliases and pick whichever exists in TF tree.
+        """
+        # if preferred exists, keep it
+        if self._can_T(self.control_base_pref, self.control_base_pref):
+            self.control_base_active = self.control_base_pref
+            return self.control_base_active
 
-        # Try alternative
-        if self._can_T(self.base_frame_alt, test_child):
-            if self.base_frame_active != self.base_frame_alt:
-                self.get_logger().warn(f"Resolved base frame -> '{self.base_frame_alt}'")
-            self.base_frame_active = self.base_frame_alt
-            return self.base_frame_active
+        # else try alternative
+        if self._can_T(self.control_base_alt, self.control_base_alt):
+            if self.control_base_active != self.control_base_alt:
+                self.get_logger().warn(f"Resolved control base frame -> '{self.control_base_alt}'")
+            self.control_base_active = self.control_base_alt
+            return self.control_base_active
 
-        # No cube TF yet; keep current, but don't spam.
-        return self.base_frame_active
+        # fallback to pref
+        return self.control_base_active
 
     def _update_cube_positions(self):
-        base = self._resolve_base_frame()
+        world = self._choose_world_frame_for_cubes()
+        if world is None:
+            # no cube TF yet
+            self.cube_pos["red"] = None
+            self.cube_pos["green"] = None
+            self.cube_pos["blue"] = None
+            return
+
+        # Optional: if world != control_base, we can transform into control_base (if TF exists).
+        control_base = self._resolve_control_base_frame()
+
         for c in ["red", "green", "blue"]:
             frame = self.cube_tf_prefix + c
-            T = self._get_T(base, frame)
-            self.cube_pos[c] = None if T is None else T[1]
+
+            # get cube position in WORLD
+            Twc = self._lookup_RT(world, frame)  # world <- cube
+            if Twc is None:
+                self.cube_pos[c] = None
+                continue
+
+            # position of cube origin in world is just t (because source=cube origin)
+            _, p_world = Twc
+
+            if world == control_base:
+                self.cube_pos[c] = p_world
+                continue
+
+            # transform world point into control_base if possible
+            Tbw = self._lookup_RT(control_base, world)  # control_base <- world
+            if Tbw is None:
+                # can't transform; keep in world (better than None)
+                self.cube_pos[c] = p_world
+                continue
+
+            R_bw, t_bw = Tbw
+            p_base = R_bw @ p_world + t_bw
+            self.cube_pos[c] = p_base
 
     def get_cube_position(self, color: str) -> Optional[np.ndarray]:
         return self.cube_pos.get(color, None)
@@ -280,20 +342,22 @@ class StackCubesNode(Node):
         return order
 
     def cube_tfs_ready(self, cube_ids: List[str]) -> bool:
-        base = self._resolve_base_frame()
+        world = self._choose_world_frame_for_cubes()
+        if world is None:
+            return False
         for cid in cube_ids:
             frame = self.cube_tf_prefix + cid
-            if not self._can_T(base, frame):
+            if not self._can_T(world, frame):
                 return False
         return True
 
     def missing_cube_tfs(self, cube_ids: List[str]) -> List[str]:
-        base = self._resolve_base_frame()
+        world = self._choose_world_frame_for_cubes() or "<no_world>"
         missing = []
         for cid in cube_ids:
             frame = self.cube_tf_prefix + cid
-            if not self._can_T(base, frame):
-                missing.append(f"{base}->{frame}")
+            if world == "<no_world>" or not self._can_T(world, frame):
+                missing.append(f"{world}->{frame}")
         return missing
 
     # -----------------------------
@@ -362,7 +426,7 @@ class StackCubesNode(Node):
         self.move_to_initial_position()
 
     # -----------------------------
-    # TEST: fake server events (same type as server returns)
+    # TEST: fake server events
     # -----------------------------
     def build_test_server_events(self) -> List[ManipulationEvent]:
         def ev(ev_type: str, cube_id: str) -> ManipulationEvent:
@@ -383,18 +447,15 @@ class StackCubesNode(Node):
     # Stacking planner: events -> steps
     # -----------------------------
     def choose_arm_for_cube(self, p: np.ndarray) -> str:
-        # y<0 => right else left
+        # y<0 => right else left (in ROS x forward, y left, z up)
         return "right" if float(p[1]) < 0.0 else "left"
 
     def build_stacking_steps_from_events(self, events: List[ManipulationEvent]) -> List[Step]:
-        # Extract cube order (unique appearance order)
         order = self.extract_cube_order(events)
-
         if len(order) < 2:
             self.get_logger().warn(f"Not enough cubes in events to stack: {order}")
             return []
 
-        # Read TFs now
         poses: Dict[str, np.ndarray] = {}
         for cid in order:
             p = self.get_cube_position(cid)
@@ -406,20 +467,18 @@ class StackCubesNode(Node):
         base_id = order[0]
         base_p = poses[base_id]
 
-        # Tunable offsets (start conservative)
-        z_above = 0.10     # approach above cube/target
-        z_grasp = 0.02     # near contact height above plane
-        z_lift  = 0.12     # lift after grasp
-        place_clear = 0.10
+        z_above = float(self.get_parameter("z_above").value)
+        z_grasp = float(self.get_parameter("z_grasp").value)
+        z_lift  = float(self.get_parameter("z_lift").value)
+        place_clear = float(self.get_parameter("place_clear").value)
 
         steps: List[Step] = []
 
-        # Stack remaining cubes onto base, increasing height each time.
         for i, cid in enumerate(order[1:], start=1):
             pick_p = poses[cid]
             arm = self.choose_arm_for_cube(pick_p)
 
-            # Target stack position: above base + i*cube_size
+            # stack on base, height increases by cube_size
             stack_p = base_p + np.array([0.0, 0.0, i * self.cube_size])
 
             # --- PICK ---
