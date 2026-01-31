@@ -68,12 +68,12 @@ def generate_launch_description():
     delayed_nodes = TimerAction(
         period=0.5,
         actions=[
-            # Node(
-            #     package='vision',
-            #     executable='camera_sub',
-            #     name='camera_sub',
-            #     output='screen'
-            # ),
+            Node(
+                package='vision',
+                executable='camera_sub',
+                name='camera_sub',
+                output='screen'
+            ),
             Node(
                 package='vision',
                 executable='detect_cubes_simple',
@@ -94,10 +94,16 @@ def generate_launch_description():
             ),
             Node(
                 package='ainex_controller',
-                executable='stack_cubes',
-                name='stack_cubes',
+                executable='stack_cubes_fixed',
+                name='stack_cubes_fixed',
                 output='screen'
             ),
+            # Node(
+            #     package='ainex_controller',
+            #     executable='ainex_hands_control_node',
+            #     name='ainex_hands_control_node',
+            #     output='screen'
+            # ),
         ]
     )
 

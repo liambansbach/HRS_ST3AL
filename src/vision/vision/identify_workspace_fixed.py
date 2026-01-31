@@ -60,9 +60,9 @@ class ArucoMarkerTfBroadcaster(Node):
         self.declare_parameter('camera_offset_rpy', [0.0, 0.0, 0.0])      # rad (keep 0 if rotation matches)
 
         self.declare_parameter('marker_frame_prefix', 'aruco_')
-        self.declare_parameter('marker_length', 0.05)  # meters
+        self.declare_parameter('marker_length', 0.05)  # meters # 0.05 // 0.03
 
-        self.declare_parameter('aruco_dict', 'DICT_6X6_250')
+        self.declare_parameter('aruco_dict', 'DICT_6X6_250') # DICT_6X6_250 // 5x5_1000
 
         self.declare_parameter('show_debug', True)
         self.declare_parameter('debug_window_name', 'Aruco TF Broadcaster')
@@ -210,7 +210,7 @@ class ArucoMarkerTfBroadcaster(Node):
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         dict_name = self.get_parameter('aruco_dict').value
-        dict_id = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_6X6_250)
+        dict_id = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_6X6_250) # cv.aruco.DICT_6X6_250
 
         if hasattr(cv2.aruco, "getPredefinedDictionary"):
             aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)

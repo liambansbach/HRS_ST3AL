@@ -6,6 +6,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from ament_index_python.packages import get_package_share_directory
 
+from scipy.spatial.transform import Rotation as R
 import numpy as np
 import pinocchio as pin
 from dataclasses import dataclass
@@ -19,24 +20,6 @@ from ainex_interfaces.msg import ManipulationEvent
 from ainex_controller.ainex_model import AiNexModel
 from ainex_controller.ainex_robot import AinexRobot
 from ainex_controller.ainex_hand_controller import HandController
-
-
-# -----------------------------
-# TF / Math helpers
-# -----------------------------
-def quat_to_rotmat(x, y, z, w):
-    n = x*x + y*y + z*z + w*w
-    if n < 1e-12:
-        return np.eye(3, dtype=np.float64)
-    s = 2.0 / n
-    return np.array(
-        [
-            [1 - (y*y + z*z) * s, (x*y - z*w) * s,     (x*z + y*w) * s],
-            [(x*y + z*w) * s,     1 - (x*x + z*z) * s, (y*z - x*w) * s],
-            [(x*z - y*w) * s,     (y*z + x*w) * s,     1 - (x*x + y*y) * s],
-        ],
-        dtype=np.float64,
-    )
 
 
 @dataclass
@@ -64,44 +47,25 @@ class StackCubesNode(Node):
         # -----------------------------
         # Params
         # -----------------------------
-        self.declare_parameter("use_test_sequence", True)
-        self.use_test_sequence: bool = bool(self.get_parameter("use_test_sequence").value)
-
-        self.declare_parameter("sim", False)
-        self.sim: bool = bool(self.get_parameter("sim").value)
+        self.use_test_sequence: bool = True
+        
+        self.sim: bool = False
 
         # Controllers expect a base frame (your test node implicitly uses this convention)
-        self.declare_parameter("control_base_frame", "base_link")
-        self.declare_parameter("control_base_frame_alt", "body_link")
-        self.control_base_pref = str(self.get_parameter("control_base_frame").value)
-        self.control_base_alt = str(self.get_parameter("control_base_frame_alt").value)
-        self.control_base_active: Optional[str] = None
+        self.base_frame = "base_link"
 
         # cube tf prefix
-        self.declare_parameter("cube_tf_prefix", "hrs_cube_")
-        self.cube_tf_prefix: str = str(self.get_parameter("cube_tf_prefix").value)
+        self.cube_tf_prefix: str = str("hrs_cube_")
 
-        # Action goal params
-        self.declare_parameter("min_world_states", 3)
-        self.declare_parameter("idle_timeout_sec", 10.0)
-        self.min_world_states = int(self.get_parameter("min_world_states").value)
-        self.idle_timeout_sec = float(self.get_parameter("idle_timeout_sec").value)
+        self.v_left = None
+        self.v_right = None
+
+        # Action goal params -> same as on server
+        self.min_world_states = 3
+        self.idle_timeout_sec = 10.0
 
         # cube size (meters)
-        self.declare_parameter("cube_size", 0.05)
-        self.cube_size = float(self.get_parameter("cube_size").value)
-
-        # Tunables for stack planner (all in CONTROL BASE FRAME)
-        self.declare_parameter("z_above", 0.10)
-        self.declare_parameter("z_grasp", 0.02)
-        self.declare_parameter("z_lift", 0.12)
-        self.declare_parameter("place_clear", 0.10)
-
-        # Optional: grasp point offset added to cube TF position (in control base frame)
-        # Example: if cube TF is at center and you want to grab slightly above center:
-        #   cube_grasp_offset = [0, 0, 0.01]
-        self.declare_parameter("cube_grasp_offset", [0.0, 0.0, 0.0])
-        self.cube_grasp_offset = np.array(self.get_parameter("cube_grasp_offset").value, dtype=np.float64).reshape(3)
+        self.cube_size = 0.04        
 
         # -----------------------------
         # Robot model / controller setup
@@ -115,12 +79,6 @@ class StackCubesNode(Node):
         self.left_hand_controller = HandController(self, self.robot_model, arm_side="left")
         self.right_hand_controller = HandController(self, self.robot_model, arm_side="right")
 
-        # Arm DOFs for hold/zero commands
-        self.left_dof = len(self.robot_model.get_arm_ids("left"))
-        self.right_dof = len(self.robot_model.get_arm_ids("right"))
-        self.zero_left = np.zeros(self.left_dof)
-        self.zero_right = np.zeros(self.right_dof)
-
         # -----------------------------
         # Initial pose
         # -----------------------------
@@ -128,9 +86,9 @@ class StackCubesNode(Node):
             "head_tilt": -0.65, "head_pan": 0,
             "r_gripper": 0, "l_gripper": 0,
             "r_el_yaw": 0.8, "l_el_yaw": -0.8,
-            "r_el_pitch": -1.4, "l_el_pitch": -1.4,
-            "r_sho_roll": 0.0, "l_sho_roll": 0.0,
-            "r_sho_pitch": 1.57, "l_sho_pitch": 1.57,
+            "r_el_pitch": -1.57, "l_el_pitch": -1.57,
+            "r_sho_roll": 0.6, "l_sho_roll": -0.6,
+            "r_sho_pitch": 1.4, "l_sho_pitch": 1.4,
             "r_hip_yaw": 0, "l_hip_yaw": 0,
             "r_hip_roll": 0, "l_hip_roll": 0,
             "r_hip_pitch": 0, "l_hip_pitch": 0,
@@ -203,11 +161,6 @@ class StackCubesNode(Node):
             q_init[self.robot_model.get_joint_id(joint_name)] = float(val)
         self.ainex_robot.move_to_initial_position(q_init)
 
-    def make_target_se3(self, translation_xyz: np.ndarray) -> pin.SE3:
-        T = pin.SE3.Identity()
-        T.translation = np.array(translation_xyz, dtype=float).reshape(3)
-        return T
-
     # -----------------------------
     # TF helpers
     # -----------------------------
@@ -225,12 +178,12 @@ class StackCubesNode(Node):
         if not self._can_T(target, source):
             return None
         tf = self.tf_buffer.lookup_transform(target, source, rclpy.time.Time())
-        Rm = quat_to_rotmat(
-            tf.transform.rotation.x,
-            tf.transform.rotation.y,
-            tf.transform.rotation.z,
-            tf.transform.rotation.w,
-        )
+
+        # Quaternion in [x, y, z, w] format
+        quat = [tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w]
+        
+        Rm = R.from_quat(quat).as_matrix()
+
         t = np.array(
             [tf.transform.translation.x,
              tf.transform.translation.y,
@@ -239,43 +192,11 @@ class StackCubesNode(Node):
         )
         return Rm, t
 
-    def _resolve_control_base_frame(self) -> Optional[str]:
-        """
-        Pick a base frame that is actually connected to cube TFs.
-        Prefer base_link, fallback to body_link.
-        """
-        test_child = self.cube_tf_prefix + "red"
-
-        # Prefer pref if it can transform to cube
-        if self._can_T(self.control_base_pref, test_child):
-            return self.control_base_pref
-
-        # Else try alt
-        if self._can_T(self.control_base_alt, test_child):
-            if self.control_base_active != self.control_base_alt:
-                self.get_logger().warn(f"Resolved control base frame -> '{self.control_base_alt}'")
-            return self.control_base_alt
-
-        return None
-
     def _update_cube_positions(self):
-        # resolve base frame once cubes exist
-        if self.control_base_active is None:
-            base = self._resolve_control_base_frame()
-            if base is None:
-                self.cube_pos["red"] = None
-                self.cube_pos["green"] = None
-                self.cube_pos["blue"] = None
-                return
-            self.control_base_active = base
-            self.get_logger().info(f"Using control base frame for cubes + targets: '{self.control_base_active}'")
-
-        base = self.control_base_active
-
         # Directly lookup base <- cube (no intermediate world frame!)
         for c in ["red", "green", "blue"]:
-            frame = self.cube_tf_prefix + c
-            Tbc = self._lookup_RT(base, frame)  # base <- cube
+            child_frame = self.cube_tf_prefix + c
+            Tbc = self._lookup_RT(self.base_frame, child_frame)  # base <- cube
             if Tbc is None:
                 self.cube_pos[c] = None
                 continue
@@ -283,7 +204,7 @@ class StackCubesNode(Node):
             _, p_base = Tbc
 
             # Optional grasp-point tweak
-            self.cube_pos[c] = p_base + self.cube_grasp_offset
+            self.cube_pos[c] = p_base
 
     def get_cube_position(self, color: str) -> Optional[np.ndarray]:
         return self.cube_pos.get(color, None)
@@ -294,19 +215,13 @@ class StackCubesNode(Node):
     def extract_cube_order(self, events: List[ManipulationEvent]) -> List[str]:
         order: List[str] = []
         for e in events:
-            cid = str(e.cube_id)
-            if cid in ["red", "green", "blue"] and cid not in order:
-                order.append(cid)
+            cube_id = str(e.cube_id)
+            if cube_id in ["red", "green", "blue"] and cube_id not in order:
+                order.append(cube_id)
         return order
 
     def cube_tfs_ready(self, cube_ids: List[str]) -> bool:
-        if self.control_base_active is None:
-            base = self._resolve_control_base_frame()
-            if base is None:
-                return False
-            self.control_base_active = base
-
-        base = self.control_base_active
+        base = self.base_frame
         for cid in cube_ids:
             frame = self.cube_tf_prefix + cid
             if not self._can_T(base, frame):
@@ -314,7 +229,7 @@ class StackCubesNode(Node):
         return True
 
     def missing_cube_tfs(self, cube_ids: List[str]) -> List[str]:
-        base = self.control_base_active or "<no_base>"
+        base = self.base_frame or "<no_base>"
         missing = []
         for cid in cube_ids:
             frame = self.cube_tf_prefix + cid
@@ -353,7 +268,9 @@ class StackCubesNode(Node):
         assert step.target_translation is not None
         assert step.hand in ["left", "right"]
 
-        T = self.make_target_se3(step.target_translation)
+        #T = self.make_target_se3(step.target_translation)
+        T = pin.SE3.Identity()
+        T.translation = np.array(step.target_translation)
 
         if step.hand == "left":
             self.left_hand_controller.set_target_pose(T, duration=step.duration, type=step.rel_or_abs)
@@ -406,39 +323,39 @@ class StackCubesNode(Node):
             return []
 
         poses: Dict[str, np.ndarray] = {}
-        for cid in order:
-            p = self.get_cube_position(cid)
+        for cube_id in order:
+            p = self.get_cube_position(cube_id)
             if p is None:
-                self.get_logger().warn(f"Missing TF for cube '{cid}'. Cannot build stacking plan.")
+                self.get_logger().warn(f"Missing TF for cube '{cube_id}'. Cannot build stacking plan.")
                 return []
-            poses[cid] = p.copy()
+            poses[cube_id] = p.copy()
 
         base_id = order[0]
         base_p = poses[base_id]
 
-        z_above = float(self.get_parameter("z_above").value)
-        z_grasp = float(self.get_parameter("z_grasp").value)
-        z_lift  = float(self.get_parameter("z_lift").value)
-        place_clear = float(self.get_parameter("place_clear").value)
+        z_above = 0.0
+        z_grasp = 0.0
+        z_lift  = 0.1
+        place_clear = self.cube_size + 0.05
 
         steps: List[Step] = []
 
-        for i, cid in enumerate(order[1:], start=1):
-            pick_p = poses[cid]
+        for i, cube_id in enumerate(order[1:], start=1):
+            pick_p = poses[cube_id]
             arm = self.choose_arm_for_cube(pick_p)
 
             # stack on base, height increases by cube_size
             stack_p = base_p + np.array([0.0, 0.0, i * self.cube_size])
 
             # PICK
-            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.8, wait_after=0.2))
+            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.5, wait_after=0.2))
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
                               target_translation=pick_p + np.array([0.0, 0.0, z_above]),
                               duration=2.5, wait_after=0.2))
-            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=pick_p + np.array([0.0, 0.0, z_grasp]),
-                              duration=1.5, wait_after=0.1))
-            steps.append(Step(kind="grip", grip_cmd="close", grip_which=arm, duration=0.8, wait_after=0.2))
+            #steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+            #                  target_translation=pick_p + np.array([0.0, 0.0, z_grasp]),
+            #                  duration=1.5, wait_after=0.1))
+            steps.append(Step(kind="grip", grip_cmd="close", grip_which=arm, duration=0.5, wait_after=0.2))
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
                               target_translation=pick_p + np.array([0.0, 0.0, z_lift]),
                               duration=2.0, wait_after=0.2))
@@ -447,10 +364,10 @@ class StackCubesNode(Node):
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
                               target_translation=stack_p + np.array([0.0, 0.0, place_clear]),
                               duration=3.0, wait_after=0.2))
-            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=stack_p + np.array([0.0, 0.0, z_grasp]),
-                              duration=1.5, wait_after=0.1))
-            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.8, wait_after=0.2))
+            #steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+            #                  target_translation=stack_p + np.array([0.0, 0.0, z_grasp]),
+            #                  duration=1.5, wait_after=0.1))
+            steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.5, wait_after=0.2))
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
                               target_translation=stack_p + np.array([0.0, 0.0, z_above]),
                               duration=2.0, wait_after=0.2))
@@ -498,8 +415,6 @@ class StackCubesNode(Node):
     # Main loop
     # -----------------------------
     def control_loop(self):
-        v_left = self.zero_left
-        v_right = self.zero_right
 
         # Init once
         if not self.did_init:
@@ -507,7 +422,7 @@ class StackCubesNode(Node):
             self.did_init = True
             self.phase = "idle"
             self.get_logger().info("Init done -> idle.")
-            self.ainex_robot.update(v_left, v_right, self.dt)
+            self.ainex_robot.update(self.v_left, self.v_right, self.dt)
             return
 
         # Idle -> build plan if ready
@@ -553,9 +468,9 @@ class StackCubesNode(Node):
 
                 if current.kind == "move":
                     if current.hand == "left":
-                        v_left = self.left_hand_controller.update(self.dt)
+                        self.v_left = self.left_hand_controller.update(self.dt)
                     else:
-                        v_right = self.right_hand_controller.update(self.dt)
+                        self.v_right = self.right_hand_controller.update(self.dt)
 
                 t = self.step_elapsed()
                 if t >= (current.duration + current.wait_after):
@@ -567,7 +482,7 @@ class StackCubesNode(Node):
                         self.finish_sequence()
 
         # Apply commands
-        self.ainex_robot.update(v_left, v_right, self.dt)
+        self.ainex_robot.update(self.v_left, self.v_right, self.dt)
 
 
 def main():

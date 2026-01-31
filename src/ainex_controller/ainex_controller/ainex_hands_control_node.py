@@ -28,10 +28,14 @@ def main():
     q_init = np.zeros(robot_model.model.nq)
     # Home position defined in urdf/pinocchio model
     # TODO: feel free to change to other initial positions away from singularities
-    q_init[robot_model.get_joint_id('r_sho_roll')] = 1.4
-    q_init[robot_model.get_joint_id('l_sho_roll')] = -1.4
-    q_init[robot_model.get_joint_id('r_el_yaw')] = 1.0
-    q_init[robot_model.get_joint_id('l_el_yaw')] = -1.0
+    q_init[robot_model.get_joint_id('r_sho_pitch')] = 1.15
+    q_init[robot_model.get_joint_id('l_sho_pitch')] = 1.15
+    q_init[robot_model.get_joint_id('r_sho_roll')] = 0.6
+    q_init[robot_model.get_joint_id('l_sho_roll')] = -0.6
+    q_init[robot_model.get_joint_id('r_el_yaw')] = 0.8
+    q_init[robot_model.get_joint_id('l_el_yaw')] = -0.8
+    q_init[robot_model.get_joint_id('r_el_pitch')] = -1.57
+    q_init[robot_model.get_joint_id('l_el_pitch')] = -1.57
     # Move robot to initial position
     ainex_robot.move_to_initial_position(q_init)
 
@@ -43,8 +47,8 @@ def main():
 
     # left hand target pose
     left_target = pin.SE3.Identity()
-    left_target.translation = np.array([0.0, 0.0, 0.0])  # Move 3 cm forward
-    left_hand_controller.set_target_pose(left_target, duration=3.0, type='rel')
+    left_target.translation = np.array([0.15, -0.01, 0.0])  # Move 3 cm forward
+    left_hand_controller.set_target_pose(left_target, duration=3.0, type='abs')
 
     # # right hand target pose
     # right_current = robot_model.right_hand_pose()
@@ -54,7 +58,7 @@ def main():
 
     # right hand target pose
     right_target = pin.SE3.Identity()
-    right_target.translation = np.array([0.0, -0.20, 0.0])  # Move up by 2 cm :: z= nach oben, y= zur seite, x= nach vorne
+    right_target.translation = np.array([0.0, -0.4, 0.0])  # Move up by 2 cm :: z= nach oben, y= zur seite, x= nach vorne
     right_hand_controller.set_target_pose(right_target, duration=3.0, type='abs')
 
     v_cmd_left = None

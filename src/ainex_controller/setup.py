@@ -32,6 +32,7 @@ setup(
             'ainex_imitation_control_node = ainex_controller.ainex_imitation_control_node:main',
             'project_cubes_onto_workspace = ainex_controller.project_cubes_onto_workspace:main',
             'stack_cubes = ainex_controller.stack_cubes:main',
+            'stack_cubes_fixed = ainex_controller.stack_cubes_fixed:main',
         ],
     },
 )

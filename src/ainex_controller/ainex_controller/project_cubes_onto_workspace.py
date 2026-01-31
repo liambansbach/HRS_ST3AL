@@ -85,7 +85,7 @@ class WorkspaceProjectionNode(Node):
         super().__init__("workspace_projection")
 
         # Frames
-        self.declare_parameter("preferred_world_frames", ["body_link", "base_link", "head_tilt_link"])
+        self.declare_parameter("preferred_world_frames", ["base_link", "body_link", "head_tilt_link"])
         self.declare_parameter("camera_frame", "hrs_camera_link")
 
         # Leave as you had it (because it fixed your mirroring empirically)
@@ -106,7 +106,7 @@ class WorkspaceProjectionNode(Node):
         self.declare_parameter("cube_prefix", "hrs_cube_")
 
         # Cube / bbox
-        self.declare_parameter("cube_size", 0.05)
+        self.declare_parameter("cube_size", 0.04)
         self.declare_parameter("bbox_timeout", 1.0)
 
         # Pixel anchor tuning

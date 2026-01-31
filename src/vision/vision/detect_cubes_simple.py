@@ -35,7 +35,7 @@ class CubeDetector(Node):
         self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new.npy")
 
         # --- [TUNE] global parameters ---
-        self.min_blob_area = 1000
+        self.min_blob_area = 750
         self.conf_thresh = 10.0
         self.square_scale = 0.9
         self.ema_alpha = 0.3

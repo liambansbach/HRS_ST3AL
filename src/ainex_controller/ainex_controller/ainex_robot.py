@@ -37,23 +37,15 @@ class AinexRobot():
         # publish initial joint states
         self.publish_joint_states()
 
-        self.left_arm_ids = self.robot_model.get_arm_ids("left")
-        self.right_arm_ids = self.robot_model.get_arm_ids("right")
+        #self.left_arm_ids = self.robot_model.get_arm_ids("left")
+        #self.right_arm_ids = self.robot_model.get_arm_ids("right")
 
-        self._hw_map = {
-            'l_sho_pitch': {'sign': -1.0, 'offset': 0.0},
-            'r_sho_pitch': {'sign':  1.0, 'offset': 0.0},
+        self.left_arm_q_ids  = self.robot_model.get_arm_ids("left")
+        self.right_arm_q_ids = self.robot_model.get_arm_ids("right")
 
-            'l_el_pitch':  {'sign': -1.0, 'offset': 0.0},
-            'r_el_pitch':  {'sign':  1.0, 'offset': 0.0},
+        self.left_arm_v_ids  = self.robot_model.get_arm_v_ids("left")
+        self.right_arm_v_ids = self.robot_model.get_arm_v_ids("right")
 
-            'l_el_yaw':    {'sign':  1.0, 'offset': 0.0},
-            'r_el_yaw':    {'sign':  1.0, 'offset': 0.0},
-
-            # offsets (keep exactly same value in both directions)
-            'r_sho_roll':  {'sign':  1.0, 'offset': +1.45},
-            'l_sho_roll':  {'sign':  1.0, 'offset': -1.45},
-        }
 
     def move_to_initial_position(self, q_init: np.ndarray = None):
         """Move robot to initial position."""
@@ -72,11 +64,19 @@ class AinexRobot():
     
     def update(self, v_cmd_left: np.ndarray, v_cmd_right: np.ndarray, dt: float):
         """Update the robot model with new desired velocities."""
+        # if v_cmd_left is not None:
+        #     self.v[self.left_arm_ids] = v_cmd_left
+        # if v_cmd_right is not None:
+        #     self.v[self.right_arm_ids] = v_cmd_right
+        # self.q += self.v * dt
+
         if v_cmd_left is not None:
-            self.v[self.left_arm_ids] = v_cmd_left
+            self.v[self.left_arm_v_ids] = v_cmd_left
         if v_cmd_right is not None:
-            self.v[self.right_arm_ids] = v_cmd_right
+            self.v[self.right_arm_v_ids] = v_cmd_right
         self.q += self.v * dt
+
+
         self.robot_model.update_model(self.q, self.v)
         
         # visualize joint states in RViz
@@ -103,17 +103,17 @@ class AinexRobot():
         q_cmd[self.robot_model.get_joint_id('l_el_pitch')] *= -1.0
         q_cmd[self.robot_model.get_joint_id('r_el_pitch')] *= 1.0
 
-        q_cmd[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
-        q_cmd[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        # q_cmd[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        # q_cmd[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
         
         # l/r_sho_roll has an offset in the real robot
         
-        
+        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] *= -1.0
+
         q_cmd[self.robot_model.get_joint_id('r_sho_roll')] += 1.45
         q_cmd[self.robot_model.get_joint_id('l_sho_roll')] -= 1.45
 
-        #q_cmd[self.robot_model.get_joint_id('r_sho_roll')] *= -1.0
-        #q_cmd[self.robot_model.get_joint_id('l_sho_roll')] *= -1.0
         
         self.joint_controller.setJointPositions(self.joint_names, q_cmd.tolist(), dt, unit="rad")
 
@@ -124,26 +124,19 @@ class AinexRobot():
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
 
-        #q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        #q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+        # q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
 
-         # l/r_sho_roll has an offset in the real robot
-
-        #q_real[self.robot_model.get_joint_id('r_sho_roll')] += 1.4
-        #q_real[self.robot_model.get_joint_id('l_sho_roll')] -= 1.4
-        q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= 1.0
-        q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
-
-        q_real[self.robot_model.get_joint_id('l_el_pitch')] *= 1.0
-        q_real[self.robot_model.get_joint_id('r_el_pitch')] *= -1.0      
-        q_real[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
-        q_real[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('l_el_pitch')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_el_pitch')] *= -1.0      
+        # q_real[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
         
-        # l/r_sho_roll has an offset in the real robot
+        # # l/r_sho_roll has an offset in the real robot
         
         
-        q_real[self.robot_model.get_joint_id('r_sho_roll')] -= 1.45
-        q_real[self.robot_model.get_joint_id('l_sho_roll')] += 1.45
+        # q_real[self.robot_model.get_joint_id('r_sho_roll')] -= 1.45
+        # q_real[self.robot_model.get_joint_id('l_sho_roll')] += 1.45
 
         return q_real
     
