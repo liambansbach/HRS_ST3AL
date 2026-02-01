@@ -48,14 +48,14 @@ class ImitationControlNode(Node):
     def __init__(self):
         super().__init__('imitation_control_node')
 
-        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 1).value #was 1 before testing around
-        self.N = self.declare_parameter('N', 5).value #was 10 before testing around
+        self.T_HORIZON_s = self.declare_parameter('T_HORIZON_s', 3).value #was 1 before testing around
+        self.N = self.declare_parameter('N', 15).value #was 10 before testing around
         self.n_joints = self.declare_parameter('n_joints', 4).value
         # 7 reference values: [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
         self.n_ref_vals = self.declare_parameter('n_ref_vals', 7).value
         # Q weights: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
         # Position tracking (high weight), joint angle tracking (lower weight as "loose target")
-        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 5, 5, 500, 500]).value
+        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 5, 5, 5, 5]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 5).value
 
@@ -88,13 +88,13 @@ class ImitationControlNode(Node):
         #
         # Joint order: [sho_pitch, sho_roll, el_pitch, el_yaw]
         # Using URDF limits directly (symmetric for both arms)
+        self.sim = self.declare_parameter('sim', False).value
+
         self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -2.09, -2.09, -1.9]).value
         self.theta_max_right = self.declare_parameter('theta_max_right', [2.09, 2.09, 2.09, 0.3]).value
         self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -2.09, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
         self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, 2.09, 2.09, 0.3]).value
-
-        self.sim = self.declare_parameter('sim', False).value
-
+    
         self.dt = self.T_HORIZON_s / self.N
 
         pkg = get_package_share_directory('ainex_description') # get package path
@@ -484,6 +484,7 @@ class ImitationControlNode(Node):
             q[self.ainex_robot.left_arm_ids],
             refs_left.tolist()
         )
+
         t_left_nmpc = perf_counter_ns()
         optimal_solution_right = self.right_hand_controller.solve_nmpc(
             q[self.ainex_robot.right_arm_ids],
@@ -499,9 +500,6 @@ class ImitationControlNode(Node):
 
         # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 
         # here in such a way that robot isnt able to reach behind himself?
-
-        if self.sim:
-            optimal_solution_left['theta'][1] *= -1
 
         self.ainex_robot.update(
             optimal_solution_left['theta'], 
@@ -522,8 +520,6 @@ class ImitationControlNode(Node):
         self.get_logger().info(
             f"Timing (ms): read_q={(t_read_q - t_before_read_q) / 1e6:.2f} left_nmpc={(t_left_nmpc - t_before_left_nmpc) / 1e6:.2f} right_nmpc={(t_right_nmpc - t_left_nmpc) / 1e6:.2f} update={(t_update - t_right_nmpc) / 1e6:.2f} publish={(t_publish - t_update) / 1e6:.2f} total={(t_publish - t_start) / 1e6:.2f}",
         )
-
-     
 
     def move_to_inital_position(self):
         # Home position defined in urdf/pinocchio model

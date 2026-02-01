@@ -16,6 +16,8 @@ class AinexRobot():
         self.node = node
         self.sim = sim
 
+        self.rate = self.node.create_rate(1)
+
         # Pinocchio model
         self.robot_model = model
         self.dt = dt
@@ -45,7 +47,7 @@ class AinexRobot():
             self.node.get_logger().info(f"q_init = {self.q}")
         # Initialize velocities to zero
         self.v = np.zeros(self.robot_model.model.nv)
-
+        
         # update the model with initial positions and zero velocities
         self.robot_model.update_model(self.q, self.v)
 
@@ -77,7 +79,8 @@ class AinexRobot():
                 return None
 
         # l/r_sho_pitch has flipped direction in the real robot
-        for name in ('l_sho_pitch', 'r_sho_pitch'):
+        #for name in ('l_sho_pitch', 'r_sho_roll'): #'l_sho_pitch', 'l_sho_roll', 'l_sho_roll', 'l_el_pitch'
+        for name in ('l_sho_pitch'): # 'l_el_pitch' defintly not flipped
             i = idx(name)
             if i is not None:
                 q[i] *= -1.0
@@ -146,6 +149,8 @@ class AinexRobot():
         # send joint commands to the robot
         if not self.sim:
             self.send_cmd(self.q, dt)
+
+        self.rate.sleep()
     
     def send_cmd(self, q_cmd: np.ndarray, dt: float):
         """
@@ -154,7 +159,27 @@ class AinexRobot():
             q_cmd (np.ndarray): Desired joint positions in Pinocchio format.
         """
         q_subset = self._subset_from_full(q_cmd)
-        q_subset = self._apply_real_robot_corrections_subset(q_subset, to_robot=True)
+        #q_subset = self._apply_real_robot_corrections_subset(q_subset, to_robot=True)
+        #self.joint_controller.setJointPositions(self.joint_names, q_subset.tolist(), dt, unit="rad")
+
+        def idx(name: str) -> int | None:
+            try:
+                return self.joint_names.index(name)
+            except ValueError:
+                return None
+
+        ## Adjust for real robot differences
+        q_subset[idx('l_sho_pitch')] *= -1.0
+        q_subset[idx('l_sho_roll')] *= -1.0
+        q_subset[idx('l_el_pitch')] *= -1.0
+
+        q_subset[idx('r_sho_roll')] *= -1.0
+        
+        q_subset[idx('l_sho_roll')] -= 1.4
+        q_subset[idx('r_sho_roll')] += 1.4
+
+        self.node.get_logger().info(f"{q_subset}")
+
         self.joint_controller.setJointPositions(self.joint_names, q_subset.tolist(), dt, unit="rad")
 
     # NOTE: this takes the most time when running on the real robot -> around 400ms - 600 ms, but sometimes also even more
@@ -163,8 +188,26 @@ class AinexRobot():
         if self.sim:
             return self.joint_states_from_model()[0]
 
+        #q_subset = np.array(self.joint_controller.getJointPositions(self.joint_names))
+        #q_subset = self._apply_real_robot_corrections_subset(q_subset, to_robot=False)
+        #self.node.get_logger().info(f"q_subset{q_subset}")
+
         q_subset = np.array(self.joint_controller.getJointPositions(self.joint_names))
-        q_subset = self._apply_real_robot_corrections_subset(q_subset, to_robot=False)
+        def idx(name: str) -> int | None:
+            try:
+                return self.joint_names.index(name)
+            except ValueError:
+                return None
+    
+        
+
+        q_subset[idx('l_sho_pitch')] *= -1.0
+        q_subset[idx('r_sho_pitch')] *= -1.0
+
+         # l/r_sho_roll has an offset in the real robot
+        q_subset[idx('r_sho_roll')] += 1.4
+        q_subset[idx('l_sho_roll')] -= 1.4
+
         return self._full_from_subset(q_subset)
    
     def publish_joint_states(self):

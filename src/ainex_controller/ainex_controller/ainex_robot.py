@@ -79,7 +79,7 @@ class AinexRobot():
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
         q_cmd[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= 1.0
         # l/r_sho_roll has an offset in the real robot
         q_cmd[self.robot_model.get_joint_id('r_sho_roll')] -= 1.4
         q_cmd[self.robot_model.get_joint_id('l_sho_roll')] += 1.4
