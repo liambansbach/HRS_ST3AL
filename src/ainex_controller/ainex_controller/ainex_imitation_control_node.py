@@ -88,7 +88,7 @@ class ImitationControlNode(Node):
         #
         # Joint order: [sho_pitch, sho_roll, el_pitch, el_yaw]
         # Using URDF limits directly (symmetric for both arms)
-        self.sim = self.declare_parameter('sim', False).value
+        self.sim = self.declare_parameter('sim', True).value
 
         self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -2.09, -2.09, -1.9]).value
         self.theta_max_right = self.declare_parameter('theta_max_right', [2.09, 2.09, 2.09, 0.3]).value
@@ -158,6 +158,7 @@ class ImitationControlNode(Node):
         self._nmpc_solve_time_ns = 0
         self._nmpc_solve_time_accum_ns = 0
         self._nmpc_solve_time_samples = 0
+
         # Create hand controllers for left and right hands
         self.left_hand_controller = NMPC(
             self.T_HORIZON_s,
@@ -201,6 +202,10 @@ class ImitationControlNode(Node):
         self.left_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_left', 10)
         self.right_ref_marker_pub = self.create_publisher(Marker, '/nmpc_ref_right', 10)
         
+        self.q_left = np.zeros(4)
+        self.q_right = np.zeros(4)
+        self.v_left = np.zeros(4)
+        self.v_right = np.zeros(4)
 
 
     def extract_fk_params_from_urdf(self, arm_side: str) -> dict:
@@ -480,16 +485,28 @@ class ImitationControlNode(Node):
 
         # Solve NMPC for left and right arms
         t_before_left_nmpc = perf_counter_ns()
-        optimal_solution_left = self.left_hand_controller.solve_nmpc(
-            q[self.ainex_robot.left_arm_ids],
-            refs_left.tolist()
-        )
+        try:
+            optimal_solution_left = self.left_hand_controller.solve_nmpc(
+                q[self.ainex_robot.left_arm_ids],
+                refs_left.tolist()
+            )
+            self.q_left = optimal_solution_left['theta']
+            self.v_left = optimal_solution_left['theta_dot']
+        except ValueError:
+            self.get_logger().warning("not able to solve QP for left arm")
+
 
         t_left_nmpc = perf_counter_ns()
-        optimal_solution_right = self.right_hand_controller.solve_nmpc(
+        try:
+            optimal_solution_right = self.right_hand_controller.solve_nmpc(
             q[self.ainex_robot.right_arm_ids],
             refs_right.tolist()
         )
+            self.q_right = optimal_solution_right['theta']
+            self.v_right = optimal_solution_right['theta_dot']
+        except ValueError:
+            self.get_logger().warning("not able to solve QP for right arm")
+
         t_right_nmpc = perf_counter_ns()
         solve_time_ns = t_right_nmpc - t_before_left_nmpc
         self._nmpc_solve_time_ns = solve_time_ns
@@ -502,10 +519,10 @@ class ImitationControlNode(Node):
         # here in such a way that robot isnt able to reach behind himself?
 
         self.ainex_robot.update(
-            optimal_solution_left['theta'], 
-            optimal_solution_right['theta'],
-            optimal_solution_left['theta_dot'], 
-            optimal_solution_right['theta_dot'],
+            self.q_left, 
+            self.q_right,
+            self.v_left, 
+            self.v_right,
             self.dt
         )
         t_update = perf_counter_ns()

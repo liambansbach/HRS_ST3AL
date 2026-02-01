@@ -16,8 +16,6 @@ class AinexRobot():
         self.node = node
         self.sim = sim
 
-        self.rate = self.node.create_rate(1)
-
         # Pinocchio model
         self.robot_model = model
         self.dt = dt
@@ -37,7 +35,7 @@ class AinexRobot():
         self.joint_name_to_model_idx = {
             name: self.robot_model.get_joint_id(name) for name in self.joint_names
         }
-        # Get initial joint positions from the robot and convert to Pinocchio order
+        # Get initial joint positions from the robot and convert to Pinocchio orders
         if self.sim:
             self.q = np.zeros(self.robot_model.model.nq)
         else:
@@ -48,6 +46,7 @@ class AinexRobot():
         # Initialize velocities to zero
         self.v = np.zeros(self.robot_model.model.nv)
         
+
         # update the model with initial positions and zero velocities
         self.robot_model.update_model(self.q, self.v)
 
@@ -149,8 +148,6 @@ class AinexRobot():
         # send joint commands to the robot
         if not self.sim:
             self.send_cmd(self.q, dt)
-
-        self.rate.sleep()
     
     def send_cmd(self, q_cmd: np.ndarray, dt: float):
         """
@@ -198,9 +195,7 @@ class AinexRobot():
                 return self.joint_names.index(name)
             except ValueError:
                 return None
-    
-        
-
+            
         q_subset[idx('l_sho_pitch')] *= -1.0
         q_subset[idx('r_sho_pitch')] *= -1.0
 
