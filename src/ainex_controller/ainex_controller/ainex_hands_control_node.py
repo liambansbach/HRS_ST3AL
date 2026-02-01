@@ -23,7 +23,7 @@ def main():
     # Create AinexRobot instance
     # TODO: set sim=False when interfacing with real robot
     # IMPORTANT !!!: Always test first in simulation to avoid damage to the real robot!!!
-    ainex_robot = AinexRobot(node, robot_model, dt, sim=False)
+    ainex_robot = AinexRobot(node, robot_model, dt, sim=True)
 
     q_init = np.zeros(robot_model.model.nq)
     # Home position defined in urdf/pinocchio model
@@ -47,7 +47,7 @@ def main():
 
     # left hand target pose
     left_target = pin.SE3.Identity()
-    left_target.translation = np.array([0.15, -0.01, 0.0])  # Move 3 cm forward
+    left_target.translation = np.array([0.15, -0.02, 0.0])  # Move 3 cm forward
     left_hand_controller.set_target_pose(left_target, duration=3.0, type='abs')
 
     # # right hand target pose

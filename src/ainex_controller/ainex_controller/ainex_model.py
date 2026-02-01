@@ -72,8 +72,11 @@ class AiNexModel:
 
         # TODO: calculate end-effector velocities using the Jacobians
         # Hint: v_cartesian = J * v_joint
-        self.v_left = self.J_left @ self.v
-        self.v_right = self.J_right @ self.v
+        # self.v_left = self.J_left @ self.v
+        # self.v_right = self.J_right @ self.v
+
+        self.v_left = pin.Motion(self.J_left @ self.v)
+        self.v_right = pin.Motion(self.J_right @ self.v)
 
         # TODO: broadcast tf transformation of hand links w.r.t. base_link for visualization in RViz
         # Hint: take a look at the tf2_ros documentation for examples

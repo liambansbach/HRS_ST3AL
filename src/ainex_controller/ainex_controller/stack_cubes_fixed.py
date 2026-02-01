@@ -49,9 +49,9 @@ class StackCubesNode(Node):
         # -----------------------------
         self.use_test_sequence: bool = True
         
-        self.sim: bool = False
+        self.sim: bool = True
 
-        # Controllers expect a base frame (your test node implicitly uses this convention)
+        # Name of the base/world frame where everything is transformed to.
         self.base_frame = "base_link"
 
         # cube tf prefix
@@ -83,7 +83,7 @@ class StackCubesNode(Node):
         # Initial pose
         # -----------------------------
         self.init_robot_pose = {
-            "head_tilt": -0.65, "head_pan": 0,
+            "head_tilt": -0.5, "head_pan": 0,
             "r_gripper": 0, "l_gripper": 0,
             "r_el_yaw": 0.8, "l_el_yaw": -0.8,
             "r_el_pitch": -1.57, "l_el_pitch": -1.57,
@@ -333,10 +333,14 @@ class StackCubesNode(Node):
         base_id = order[0]
         base_p = poses[base_id]
 
-        z_above = 0.0
-        z_grasp = 0.0
-        z_lift  = 0.1
-        place_clear = self.cube_size + 0.05
+        z_above_pick  = 0.06
+        z_lift        = 0.10
+
+        # konstant über Ziel (nicht mit i multiplizieren!)
+        place_clear   = self.cube_size + 0.05
+
+        # wenn TF im Zentrum: "Place" genau auf stack_p
+        z_place       = 0.00
 
         steps: List[Step] = []
 
@@ -344,35 +348,40 @@ class StackCubesNode(Node):
             pick_p = poses[cube_id]
             arm = self.choose_arm_for_cube(pick_p)
 
-            # stack on base, height increases by cube_size
+            # Center-auf-Center stacken: i * cube_size
             stack_p = base_p + np.array([0.0, 0.0, i * self.cube_size])
 
             # PICK
             steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.5, wait_after=0.2))
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=pick_p + np.array([0.0, 0.0, z_above]),
-                              duration=2.5, wait_after=0.2))
-            #steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-            #                  target_translation=pick_p + np.array([0.0, 0.0, z_grasp]),
-            #                  duration=1.5, wait_after=0.1))
+                            target_translation=pick_p + np.array([0.0, 0.0, z_above_pick]),
+                            duration=2.5, wait_after=0.2))
             steps.append(Step(kind="grip", grip_cmd="close", grip_which=arm, duration=0.5, wait_after=0.2))
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=pick_p + np.array([0.0, 0.0, z_lift]),
-                              duration=2.0, wait_after=0.2))
+                            target_translation=pick_p + np.array([0.0, 0.0, z_lift]),
+                            duration=2.0, wait_after=0.2))
 
             # PLACE
+            # 1) approach: immer konstant über dem Ziel
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=stack_p + np.array([0.0, 0.0, place_clear]),
-                              duration=3.0, wait_after=0.2))
-            #steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-            #                  target_translation=stack_p + np.array([0.0, 0.0, z_grasp]),
-            #                  duration=1.5, wait_after=0.1))
+                            target_translation=stack_p + np.array([0.0, 0.0, place_clear]),
+                            duration=3.0, wait_after=0.2))
+
+            # 2) runter auf die Stack-Position (Center)
+            steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
+                            target_translation=stack_p + np.array([0.0, 0.0, z_place]),
+                            duration=1.5, wait_after=0.1))
+
+            # 3) loslassen
             steps.append(Step(kind="grip", grip_cmd="open", grip_which=arm, duration=0.5, wait_after=0.2))
+
+            # 4) retreat: wieder hoch (konstant)
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                              target_translation=stack_p + np.array([0.0, 0.0, z_above]),
-                              duration=2.0, wait_after=0.2))
+                            target_translation=stack_p + np.array([0.0, 0.0, place_clear]),
+                            duration=2.0, wait_after=0.2))
 
         return steps
+
 
     # -----------------------------
     # SERVER: start recording, wait for result
