@@ -55,9 +55,9 @@ class ImitationControlNode(Node):
         self.n_ref_vals = self.declare_parameter('n_ref_vals', 7).value
         # Q weights: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
         # Position tracking (high weight), joint angle tracking (lower weight as "loose target")
-        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 5, 5, 5, 5]).value
+        self.Q_diag = self.declare_parameter('Q_diag', [100, 100, 100, 5, 5, 500, 500]).value
         self.R_diag = self.declare_parameter('R_diag', [0.1, 0.1, 0.1, 0.1]).value
-        self.theta_dot_max = self.declare_parameter('theta_dot_max', 10).value
+        self.theta_dot_max = self.declare_parameter('theta_dot_max', 5).value
 
         """
         Testing Protocol of NMPC parameters for 3D version and N_targets = 4 (with gaming pc not real robot):
@@ -93,12 +93,13 @@ class ImitationControlNode(Node):
         self.theta_min_left = self.declare_parameter('theta_min_left', [-2.09, -2.09, -2.09, -1.9]).value  # el_yaw mirrored: [-0.3, 1.9]
         self.theta_max_left = self.declare_parameter('theta_max_left', [2.09, 2.09, 2.09, 0.3]).value
 
-        self.sim = self.declare_parameter('sim', True).value
+        self.sim = self.declare_parameter('sim', False).value
 
         self.dt = self.T_HORIZON_s / self.N
 
         pkg = get_package_share_directory('ainex_description') # get package path
         self.urdf_path = pkg + '/urdf/ainex.urdf'
+        
         self.robot_model = AiNexModel(self, self.urdf_path)
         
         self.get_logger().info("TESTING: Ainex Model loaded.")
@@ -275,6 +276,7 @@ class ImitationControlNode(Node):
         
         # Define known axes from URDF (fallback based on joint naming convention)
         # From URDF: sho_pitch = Y axis, sho_roll = X axis, el_pitch = Y axis, el_yaw = Z axis
+        
         known_axes = {
             'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
             'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
@@ -284,31 +286,8 @@ class ImitationControlNode(Node):
             'r_sho_roll': 'x',    # axis="1 0 0"
             'r_el_pitch': 'y',   # axis="0 -1 0"
             'r_el_yaw': 'z',      # axis="0 0 1"
-        }
-        if self.sim:
-            # In simulation, the left arm's sho_roll axis is inverted
-            known_axes = {
-                'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
-                'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
-                'l_el_pitch': '-y',    # axis="0 1 0" (left arm bends)
-                'l_el_yaw': '-z',     # axis="0 0 -1" (left side)
-                'r_sho_pitch': '-y',  # axis="0 -1 0" in URDF (right side)
-                'r_sho_roll': 'x',    # axis="1 0 0"
-                'r_el_pitch': 'y',   # axis="0 -1 0"
-                'r_el_yaw': 'z',      # axis="0 0 1"
-            }        
-        else: 
-            # Real Robot:
-            known_axes = {
-            'l_sho_pitch': 'y',   # axis="0 1 0" in URDF (left side)
-            'l_sho_roll': 'x',    # axis="1 0 0" but rotates arm inward on left
-            'l_el_pitch': '-y',    # axis="0 1 0" (left arm bends)
-            'l_el_yaw': '-z',     # axis="0 0 -1" (left side)
-            'r_sho_pitch': '-y',  # axis="0 -1 0" in URDF (right side)
-            'r_sho_roll': 'x',    # axis="1 0 0"
-            'r_el_pitch': 'y',   # axis="0 -1 0"
-            'r_el_yaw': 'z',      # axis="0 0 1"
-            }
+        }        
+
         params = {}
         for i, joint_name in enumerate(joint_names):
             joint_id = model.getJointId(joint_name)
@@ -454,6 +433,7 @@ class ImitationControlNode(Node):
         perf_counter_ns = self._perf_counter_ns
         t_start = perf_counter_ns()
         # Wrist position targets
+        
         x_left = msg.wrist_target_left.x
         y_left = msg.wrist_target_left.y
         z_left = msg.wrist_target_left.z
@@ -461,7 +441,8 @@ class ImitationControlNode(Node):
         x_right = msg.wrist_target_right.x
         y_right = msg.wrist_target_right.y
         z_right = msg.wrist_target_right.z
-        
+            
+
         # Joint angle targets from arm vector angles:
         # sho_pitch ~ vertical angle of shoulder-elbow (elevation)
         # sho_roll ~ horizontal angle of shoulder-elbow (azimuth)  
@@ -518,6 +499,9 @@ class ImitationControlNode(Node):
 
         # maybe TODO You could constain the  optimal_solution_left['theta'] and  optimal_solution_right['theta'] 
         # here in such a way that robot isnt able to reach behind himself?
+
+        if self.sim:
+            optimal_solution_left['theta'][1] *= -1
 
         self.ainex_robot.update(
             optimal_solution_left['theta'], 

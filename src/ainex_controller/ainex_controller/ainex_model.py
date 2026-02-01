@@ -47,8 +47,7 @@ class AiNexModel:
         """Update the model with new joint positions and velocities."""
         self.q = q
         self.v = v
-        # clip velocities to reasonable values
-        self.v = np.clip(self.v, -5.0, 5.0)
+
         # update pinocchio model with new q, v
         pin.forwardKinematics(self.model, self.data, self.q, self.v)
         pin.updateFramePlacements(self.model, self.data)
@@ -99,8 +98,8 @@ class AiNexModel:
         placement = pin.SE3(rotation, translation)
 
         # create Frame using parent joint id, parent frame id, and SE3 placement
-        frame = pin.Frame(name, parent_joint, placement, pin.FrameType.OP_FRAME)
-        #frame = pin.Frame(name, parent_joint, parent_frame_id, placement, pin.FrameType.OP_FRAME)
+        #frame = pin.Frame(name, parent_joint, placement, pin.FrameType.OP_FRAME)
+        frame = pin.Frame(name, parent_joint, parent_frame_id, placement, pin.FrameType.OP_FRAME)
 
         # add to model and recreate data so sizes match
         self.model.addFrame(frame)

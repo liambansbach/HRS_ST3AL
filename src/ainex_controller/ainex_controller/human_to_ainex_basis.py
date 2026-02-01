@@ -230,7 +230,6 @@ class HumanToAinex(Node):
                 elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
                 theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, C)
 
-
                 return theta_3, theta_4
             
             sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
@@ -239,18 +238,34 @@ class HumanToAinex(Node):
             return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
 
         elif side == "right":
-            def left_shoulder_to_elbow(vec):
+            def right_shoulder_to_elbow(vec):
                 x, y, z = vec
                 theta_1 = np.arctan2(x, -z)
                 theta_2 = np.arctan2(np.sqrt(x**2 + z**2), -y)
                 return theta_1, theta_2
             
-            def left_elbow_to_wrist(vec, theta_1, theta_2):
+            def right_elbow_to_wrist(vec, theta_1, theta_2):
                 x, y, z = vec
                 s1 = np.sin(theta_1)
                 c1 = np.cos(theta_1)
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
+
+                # gpts correction, works:
+                A = c1 * x + s1 * z 
+                B = - s1  * c2 * x - s2 * y + c1 * c2 * z
+                C = -(s1 * s2 * x + c2 * y + c1 * s2 * z + L1)
+                theta_3 = np.arctan2(B, A)
+                # maybe the +- infront of sqrt should be considered somehow to reach every position?
+                # positive sign => elbow BELOW the shoulder seems to work
+                # negative sign => elbow ABOVE the shoulder seems to work
+                #theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
+                sqrt_term = np.sqrt(A**2 + B**2)
+                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
+                theta_4 = np.arctan2(sqrt_term if elbow_above_shoulder else sqrt_term, C)
+
+                return theta_3, theta_4
+
                 #chatgpts correction of your arctan2 version:
                 # TODO change signs of FK aka in Transformation matrices to match the negation of theta_3 here;
                 theta_3 = -np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
@@ -298,10 +313,10 @@ class HumanToAinex(Node):
                 #self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
                 return theta_3, theta_4
             
-            sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
-            elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(elbow_wrist_robot, sho_elbow_horiz, sho_elbow_vert)
+            sho_elbow_horiz, sho_elbow_vert = right_shoulder_to_elbow(shoulder_elbow_robot)
+            elbow_wrist_horiz, elbow_wrist_vert = right_elbow_to_wrist(elbow_wrist_robot, sho_elbow_horiz, sho_elbow_vert)
             
-            return sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert
+            return sho_elbow_horiz, sho_elbow_vert, -elbow_wrist_horiz, elbow_wrist_vert
 
 
     def mp_to_ainex_frame(self, mp_frame):

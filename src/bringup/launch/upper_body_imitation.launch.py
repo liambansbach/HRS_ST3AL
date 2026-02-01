@@ -30,8 +30,20 @@ def generate_launch_description():
         'site-packages'
     )
 
+    cmeel_lib_path = os.path.join(venv_site_packages, 'cmeel.prefix', 'lib')
+
     existing_python_path = os.environ.get('PYTHONPATH', '')
-    new_python_path = f"{venv_site_packages}:{cmeel_site_packages}:{existing_python_path}"
+    existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+
+    python_path_parts = [venv_site_packages, cmeel_site_packages]
+    if existing_python_path:
+        python_path_parts.append(existing_python_path)
+    new_python_path = os.pathsep.join(python_path_parts)
+
+    ld_library_path_parts = [cmeel_lib_path]
+    if existing_ld_library_path:
+        ld_library_path_parts.append(existing_ld_library_path)
+    new_ld_library_path = os.pathsep.join(ld_library_path_parts)
 
     """ Defines all nodes to be launched """
     camera_sub = Node(
@@ -46,7 +58,10 @@ def generate_launch_description():
         executable='mp_pose',
         output='screen',
         parameters=[{}],
-        additional_env={'PYTHONPATH': new_python_path}
+        additional_env={
+            'PYTHONPATH': new_python_path,
+            'LD_LIBRARY_PATH': new_ld_library_path,
+        }
     )
 
     human_to_ainex_basis = Node(
@@ -61,7 +76,10 @@ def generate_launch_description():
         executable='ainex_imitation_control_node',
         output='screen',
         parameters=[{}],
-        additional_env={'PYTHONPATH': new_python_path}
+        additional_env={
+            'PYTHONPATH': new_python_path,
+            'LD_LIBRARY_PATH': new_ld_library_path,
+        }
     )
 
     return LaunchDescription([
