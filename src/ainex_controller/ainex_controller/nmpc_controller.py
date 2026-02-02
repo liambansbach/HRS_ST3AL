@@ -1,7 +1,37 @@
-import pinocchio as pin
-#import pinocchio.casadi as cpin
 import casadi as ca
 import numpy as np
+
+"""
+Nonlinear Model Predictive Control (NMPC) Module.
+
+This module implements a kinematic NMPC controller using the CasADi optimization framework. 
+It is specifically designed for the 4-DOF robotic arm of the AiNEX humanoid platform,
+(configured by default for the structure: Shoulder Pitch, Shoulder Roll, Elbow Pitch, Elbow Yaw)
+but could be applied to other similar setups with minimal effort. 
+
+The controller solves a finite-horizon Optimal Control Problem (OCP) at each time step 
+to minimize the error between the current state and a reference target while satisfying 
+actuator constraints.
+
+Key Features:
+    - **Symbolic Forward Kinematics**: Here, implemented manually using homogeneous transformation 
+      matrices within CasADi to map joint angles to end-effector Cartesian positions 
+      without requiring an external URDF loader at runtime, but transforms can also be passed
+      at runtime.
+    - **Hybrid Cost Function**: Optimization weights allow balancing between Cartesian 
+      position tracking (high priority) and joint-space configuration targets (secondary priority).
+    - **Warm Starting**: Utilizes the solution from the previous control step as the 
+      initial guess for the solver to ensure real-time performance and faster convergence.
+    - **Constraint Handling**: Enforces hardware limits on joint angles (Theta) and 
+      joint velocities (Theta_dot).
+
+Dependencies:
+    - casadi: Used for symbolic differentiation, problem formulation, and SQP solving.
+    - numpy: Used for matrix operations and data handling.
+
+Classes:
+    NMPC: The main controller class that formulates and solves the optimization problem.
+"""
 
 class NMPC:
     def __init__(
@@ -20,9 +50,6 @@ class NMPC:
             theta_dot_max = 2.0,  
             theta_min = np.array([-2.09, -2.09, -2.09, -2.09]),
             theta_max = np.array([2.09, 2.09, 2.09, 2.09]),
-            urdf_model = None,
-            arm_joint_ids = None,
-            end_effector_name = None,
 
             homogeneous_transform_params = {
                 'T_0_1':     ([0,0,0], '-y'),
@@ -33,7 +60,7 @@ class NMPC:
             },
 
             solver_options = {
-                'qpsol': 'qpoases', # Fast QP solver for MPC
+                'qpsol': 'qpoases', 
                 'qpsol_options': {'printLevel': 'none'},
                 'print_time': False,
                 'print_header': False,
@@ -50,23 +77,24 @@ class NMPC:
         self.dt = T_HORIZON_s / N           # Time step (delta t)
 
         self.n_joints = n_joints            # 0: Shoulder Pitch, 1: Shoulder Roll, 2: Elbow Pitch, 3: Elbow Yaw
-        # State: [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
-        self.n_ref_vals = n_ref_vals
+        self.n_ref_vals = n_ref_vals        # State: [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
 
         # Weight Matrices for tuning optimization
-        self.Q_diag = Q_diag                #[x, y, theta_elbow]
-        self.R_diag = R_diag                #[sho_p, sho_r, el_p, el_y]
+        # Higher Q means stricter weighting of following targets and vice versa
+        # Higher R means stricter usage of control input and vice versa
+        self.Q_diag = Q_diag                # [x_wrist, y_wrist, z_wrist, sho_pitch, sho_roll, el_pitch, el_yaw]
+        self.R_diag = R_diag                # [sho_pitch_dot, sho_roll_dot, el_pitch_dot, el_yaw_dot]
 
         # Optimization Constraints
-        self.theta_dot_max = theta_dot_max  # rad/s
+        self.theta_dot_max = theta_dot_max  # Joint velocity limits [rad/s]
         self.theta_min = theta_min          # Maximum negative joint rotation allowed
         self.theta_max = theta_max          # Maximum positive joint rotation allowed
 
-        self.T_0_1_params     = homogeneous_transform_params['T_0_1']
-        self.T_1_2_params     = homogeneous_transform_params['T_1_2']
-        self.T_2_3_params     = homogeneous_transform_params['T_2_3']
-        self.T_3_4_params     = homogeneous_transform_params['T_3_4']
-        self.T_4_wrist_params = homogeneous_transform_params['T_4_wrist']
+        self.T_0_1_params     = homogeneous_transform_params['T_0_1'] # Shoulder Pitch, 
+        self.T_1_2_params     = homogeneous_transform_params['T_1_2'] # Shoulder Roll, 
+        self.T_2_3_params     = homogeneous_transform_params['T_2_3'] # Elbow Pitch, 
+        self.T_3_4_params     = homogeneous_transform_params['T_3_4'] # Elbow Yaw
+        self.T_4_wrist_params = homogeneous_transform_params['T_4_wrist'] # Link from elbow to wrist
 
         self._define_forward_kinemtics_manually()
 
@@ -74,19 +102,19 @@ class NMPC:
 
         self.opti.solver('sqpmethod', solver_options)
 
-        self.prev_Theta = None
-        self.prev_U = None
+        self.prev_Theta = None  # Last iteration joint angle trajectories
+        self.prev_U = None      # Last iteration joint velocity control inputs
 
 
     def _define_forward_kinemtics_manually(self):
         """
-        Forward kinematics from provided homodeneous transformation matrices.
+        Forward kinematics from provided homogeneous transformation matrices.
         """
 
         # We define the chain relative to the shoulder.
         # Shoulder Pitch -> Shoulder Roll -> Elbow Pitch -> Elbow Yaw -> Wrist
         # The return function is a symbolic vector function, finding the origin of wrist relative to the shoulder
-        # Input [theta] -> Output [x_wrist, y_wrist]
+        # Input [theta] -> Output [x_wrist, y_wrist, z_wrist]
 
         def _get_homogeneous_transform(xyz, axis, angle):
             
@@ -143,8 +171,7 @@ class NMPC:
 
         """ Parameters """
         self.Theta_0 = self.opti.parameter(self.n_joints)        # Initial Joint Configuration
-        # Reference: s_ref = [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
-        self.s_ref = self.opti.parameter(self.n_ref_vals)
+        self.s_ref = self.opti.parameter(self.n_ref_vals)        # Targets [x, y, z, sho_pitch, sho_roll, el_pitch, el_yaw]
 
         """ Objective Function """
         cost = 0
@@ -159,7 +186,7 @@ class NMPC:
                 self.Theta[:, k]  # [sho_pitch, sho_roll, el_pitch, el_yaw]
                 )                                
             
-            e_k = s_k - self.s_ref                               # Error
+            e_k = s_k - self.s_ref                               # Error (Current state - Targets)
             
             # Accumulated Cost -> 0.5*e^T*Q*e + 0.5*u^T*R*u
             cost += 0.5 * ca.mtimes([e_k.T, self.Q, e_k]) + 0.5 * ca.mtimes([self.U[:,k].T, self.R, self.U[:,k]])  
@@ -177,14 +204,13 @@ class NMPC:
         self.opti.subject_to(self.Theta[:, 0] == self.Theta_0)   # Initial Condition
 
         for k in range(self.N):
-            self.opti.subject_to(self.Theta[:, k+1] == self.Theta[:, k] + self.dt * self.U[:, k])  # Kinematics using euler integration (theta_{k+1} = theta_k + dt * theta_dot_k)
-            self.opti.subject_to(self.opti.bounded(-self.theta_dot_max, self.U[:, k], self.theta_dot_max)) # Velocity Limits
+            self.opti.subject_to(self.Theta[:, k+1] == self.Theta[:, k] + self.dt * self.U[:, k])           # Kinematics using euler integration (theta_{k+1} = theta_k + dt * theta_dot_k)
+            self.opti.subject_to(self.opti.bounded(-self.theta_dot_max, self.U[:, k], self.theta_dot_max))  # Velocity Limits
             
-        self.opti.subject_to(self.opti.bounded(self.theta_min, self.Theta, self.theta_max))        # Joint Position Limits
+        self.opti.subject_to(self.opti.bounded(self.theta_min, self.Theta, self.theta_max))                 # Joint Position Limits
 
     def solve_nmpc(self, current_Theta, current_s_ref):
         """ Set Parameters """
-        #self.get_logger().info(f'current_s_ref: {current_s_ref}')
         self.opti.set_value(self.Theta_0, current_Theta)
         self.opti.set_value(self.s_ref, current_s_ref)
         
@@ -213,8 +239,8 @@ class NMPC:
             self.prev_Theta = sol.value(self.Theta)
             self.prev_U     = sol.value(self.U)
             
-            theta_optimal = sol.value(self.Theta[:, 1])
-            u_optimal = sol.value(self.U[:, 0])
+            theta_optimal = sol.value(self.Theta[:, 1])     # Optimal trajectory for each joint (0 == current state, 1 == next state)
+            u_optimal = sol.value(self.U[:, 0])             # Optimal input == joint velocities (0 == input required to reach next optimal state)
 
             return {'theta': theta_optimal, 'theta_dot': u_optimal}
                     
