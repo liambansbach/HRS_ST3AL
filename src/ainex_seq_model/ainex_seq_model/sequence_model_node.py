@@ -54,8 +54,8 @@ class SequenceModel(Node):
         #PARAMETERS MOTION
         self.motion_window = 20 
         self.occluded_frames = 8
-        self.min_disp_m = 7.0          # px (ignore tiny jitter)
-        self.v_moving_thresh = 25.0    # px/s 
+        self.min_disp_m = 30.0          # px (ignore tiny jitter)
+        self.v_moving_thresh = 40.0    # px/s 
         self.v_still_thresh = 4.0    # px/s 
 
         self.motion = {}
@@ -69,8 +69,8 @@ class SequenceModel(Node):
             self.moving_count[cube] = 0
 
         # PARAMETERS FSM
-        self.still_thresh = 8
-        self.moving_thresh = 5
+        self.still_thresh = 10
+        self.moving_thresh = 10
 
         #PARAMETERS WORLD STATE
         self.world_still_thresh = 25

@@ -25,7 +25,7 @@ def main():
     # Create AinexRobot instance
     # TODO: set sim=False when interfacing with real robot
     # IMPORTANT !!!: Always test first in simulation to avoid damage to the real robot!!!
-    ainex_robot = AinexRobot(node, robot_model, dt, sim=True)
+    ainex_robot = AinexRobot(node, robot_model, dt, sim=False)
 
     q_init = np.zeros(robot_model.model.nq)
     # Home position defined in urdf/pinocchio model

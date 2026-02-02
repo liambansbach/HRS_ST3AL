@@ -63,19 +63,19 @@ class CubeDetector(Node):
         # per-color params
         self.color_params = {
             "red": {
-                "sv_min": (0, 50, 30), # 0, 70, 50  // 0, 50, 30
+                "sv_min": (0, 255*0.18, 255*0.33), # 0, 70, 50  // 0, 50, 30
                 "blur": (3, 3),
                 "bp_tozero": 20,
                 "tight_thr": 70,
             },
             "green": {
-                "sv_min": (0, 255*0.38, 255*0.57), # 0, 35, 35
+                "sv_min": (0, 255*0.38, 255*0.25), # 0, 35, 35
                 "blur": (3, 3),
                 "bp_tozero": 30,
                 "tight_thr": 80,
             },
             "blue": {
-                "sv_min": (0, 255*0.55, 255*0.22), # 0, 35, 35
+                "sv_min": (0, 255*0.55, 255*0.08), # 0, 35, 35
                 "blur": (3, 3),
                 "bp_tozero": 20,
                 "tight_thr": 70,

@@ -8,12 +8,12 @@ def generate_launch_description():
         period=1.0,   # Sekunden Verzögerung
         actions=[
 
-            Node(
-                package='vision',
-                executable='camera_sub',
-                name='camera_sub',
-                output='screen'
-            ),
+            # Node(
+            #     package='vision',
+            #     executable='camera_sub',
+            #     name='camera_sub',
+            #     output='screen'
+            # ),
 
             Node(
                 package='vision',

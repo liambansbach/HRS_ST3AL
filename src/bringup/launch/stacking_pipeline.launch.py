@@ -66,7 +66,7 @@ def generate_launch_description():
 
     # Delay your nodes to ensure TF tree is alive
     delayed_nodes = TimerAction(
-        period=1.0,
+        period=0.001,
         actions=[
             # Node(
             #     package='vision',
@@ -78,6 +78,12 @@ def generate_launch_description():
                 package='vision',
                 executable='detect_cubes_simple',
                 name='detect_cubes_simple',
+                output='screen'
+            ),
+            Node(
+                package='ainex_seq_model',
+                executable='sequence_model',
+                name='sequence_model',
                 output='screen'
             ),
             Node(
@@ -98,6 +104,7 @@ def generate_launch_description():
                 name='stack_cubes_fixed',
                 output='screen'
             ),
+
             # Node(
             #     package='ainex_controller',
             #     executable='ainex_hands_control_node',

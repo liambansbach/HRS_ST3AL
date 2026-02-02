@@ -48,7 +48,7 @@ class StackCubesNode(Node):
         # -----------------------------
         # Params
         # -----------------------------
-        self.use_test_sequence: bool = True
+        self.use_test_sequence: bool = False
         
         self.sim: bool = False
 
@@ -63,7 +63,7 @@ class StackCubesNode(Node):
 
         # Action goal params -> same as on server
         self.min_world_states = 3
-        self.idle_timeout_sec = 10.0
+        self.idle_timeout_sec = 5
 
         # cube size (meters)
         self.cube_size = 0.035        
@@ -151,6 +151,7 @@ class StackCubesNode(Node):
         # -----------------------------
         self.client = ActionClient(self, RecordDemo, "record_demo")
         self.waiting_for_server_result = False
+        self
 
         # -----------------------------
         # Startup behavior
@@ -239,6 +240,7 @@ class StackCubesNode(Node):
             cube_id = str(e.cube_id)
             if cube_id in ["red", "green", "blue"] and cube_id not in order:
                 order.append(cube_id)
+        print(order)
         return order
 
     def cube_tfs_ready(self, cube_ids: List[str]) -> bool:
@@ -368,6 +370,8 @@ class StackCubesNode(Node):
 
         steps: List[Step] = []
 
+        self.re
+
         for i, cube_id in enumerate(order[1:], start=1):
             pick_p = poses[cube_id]
             arm = self.choose_arm_for_cube(pick_p)
@@ -438,6 +442,7 @@ class StackCubesNode(Node):
         goal = RecordDemo.Goal()
         goal.min_world_states = int(self.min_world_states)
         goal.idle_timeout_sec = float(self.idle_timeout_sec)
+
 
         self.waiting_for_server_result = True
         future = self.client.send_goal_async(goal)
