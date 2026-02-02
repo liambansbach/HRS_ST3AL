@@ -1,3 +1,26 @@
+"""
+AiNEX Robot Model Wrapper.
+
+This module wraps a Pinocchio model loaded from URDF and exposes convenience helpers
+for updating forward kinematics, managing hand frames, and accessing joint metadata
+used by the imitation controllers.
+
+Key Features:
+    - **URDF Loading**: Builds the Pinocchio model and data from a provided URDF path.
+    - **Frame Augmentation**: Adds custom left/right hand frames for easier end-effector access.
+    - **Kinematics Update**: Maintains end-effector poses and provides update utilities.
+    - **Joint Metadata**: Exposes joint names and arm joint indices in Pinocchio order.
+
+Dependencies:
+    - pinocchio: Rigid-body model, kinematics, and frame handling.
+    - numpy: State storage and array utilities.
+    - rclpy: ROS 2 node utilities (for TF broadcaster setup).
+    - tf2_ros, geometry_msgs: TF broadcasting helpers (currently unused).
+
+Classes:
+    AiNexModel: Pinocchio-backed model utilities for AiNEX.
+"""
+
 import pinocchio as pin
 import numpy as np
 from rclpy.node import Node
@@ -52,41 +75,19 @@ class AiNexModel:
         pin.forwardKinematics(self.model, self.data, self.q, self.v)
         pin.updateFramePlacements(self.model, self.data)
 
-        self.x_left = self.data.oMf[self.left_hand_id].copy() # ref docu: Vector of absolute operationnel frame placements (wrt the world). 
-        self.x_right = self.data.oMf[self.right_hand_id].copy() # Essentially this is the end-effector frame placement with respect to the base-link (com?)
-
-        #self.broadcast_tf("left") # Broadcaster for left hand
-        #self.broadcast_tf("right") # Broadcaster for right hand
-
-    def broadcast_tf(self, hand: str):
-        t = TransformStamped()
-        t.header.stamp = self.node.get_clock().now().to_msg()
-        t.child_frame_id = hand
-
-        match hand:
-            case "left":
-                chosen_hand = self.x_left
-                t.header.frame_id = "l_sho_pitch"    
-            case "right":
-                chosen_hand = self.x_right
-                t.header.frame_id = "r_sho_pitch"
-            case _:
-                print("The robot only have two hands, left or right...") 
-                return 
-
-        t.transform.translation.x = chosen_hand.translation[0]
-        t.transform.translation.y = chosen_hand.translation[1]
-        t.transform.translation.z = chosen_hand.translation[2]
-
-        q = pin.Quaternion(chosen_hand.rotation)
-        t.transform.rotation.x = q.x
-        t.transform.rotation.y = q.y
-        t.transform.rotation.z = q.z
-        t.transform.rotation.w = q.w
-
-        self.br.sendTransform(t)
+        self.x_left = self.data.oMf[self.left_hand_id].copy() 
+        self.x_right = self.data.oMf[self.right_hand_id].copy() 
 
     def add_additional_frames(self, name, parent_frame, translation, rotation):
+        """Add an additional frame to the Pinocchio model.
+        Args:
+            name (str): Name of the new frame.
+            parent_frame (str): Name of the parent frame.
+            translation (np.ndarray): Translation vector of the new frame.
+            rotation (np.ndarray): Rotation matrix of the new frame.
+        Returns:
+            None
+        """
         # parent_frame: a frame name in the existing model (string)
         # compute the parent joint index from the existing frame
         parent_frame_id = self.model.getFrameId(parent_frame)
@@ -106,19 +107,39 @@ class AiNexModel:
         self.data = self.model.createData()
 
     def left_hand_pose(self):
-        """Return the left hand pose in base_link frame."""
+        """Return the left hand pose in base_link frame.
+        Args:
+            None
+        Returns:
+            SE3: Left hand pose in base_link frame.
+        """
         return self.x_left
     
     def right_hand_pose(self):
-        """Return the right hand pose in base_link frame."""
+        """Return the right hand pose in base_link frame.
+        Args:
+            None
+        Returns:
+            SE3: Right hand pose in base_link frame.
+        """
         return self.x_right
         
     def pin_joint_names(self):
-        """Return the joint names in Pinocchio model order."""
+        """Return the joint names in Pinocchio model order.
+        Args:
+            None
+        Returns:
+            List[str]: Joint names.
+        """
         return self.joint_names
     
     def get_arm_ids(self, arm_side: str):
-        """Get joint ids for the specified arm side ('left' or 'right')."""
+        """Get joint ids for the specified arm side ('left' or 'right').
+        Args:
+            arm_side (str): 'left' or 'right'
+        Returns:
+            List[int]: Joint ids for the specified arm.
+        """
         # l/r_sho_pitch, l/r_sho_roll, l/r_el_yaw, l/r_el_pitch
 
         arm_joint_names = ['sho_pitch', 'sho_roll', 'el_yaw', 'el_pitch']
@@ -143,7 +164,11 @@ class AiNexModel:
         return arm_ids
 
     def get_joint_id(self, joint_name: str) -> int:
-        """Get the joint id from the pinocchio model."""
+        """Get the joint id from the pinocchio model.
+        Args:
+            joint_name (str): Name of the joint.
+        Returns:
+            int: Joint id."""
         jid = self.model.getJointId(joint_name)
         q_idx = self.model.joints[jid].idx_q
         return q_idx
