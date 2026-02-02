@@ -108,7 +108,7 @@ class AinexRobot():
                 return self.joint_names.index(name)
             except ValueError:
                 return None
-        for name in ('l_sho_pitch'): 
+        for name in ('l_sho_pitch',):
             i = idx(name)
             if i is not None:
                 q[i] *= -1.0
