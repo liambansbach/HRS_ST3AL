@@ -83,7 +83,7 @@ class AinexRobot():
             i = idx(name)
             if i is not None:
                 q[i] *= -1.0
-
+        #q[idx('r_sho_pitch')] *= -1.0
         # l/r_sho_roll has an offset in the real robot
         i = idx('r_sho_roll')
         if i is not None:

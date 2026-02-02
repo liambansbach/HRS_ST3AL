@@ -101,7 +101,6 @@ class HumanToAinex(Node):
                 robot.z = -human.y (up/down, inverted)
         """
 
-        """ Left """
         shoulder_wrist_mp = np.array([
             wrist.x - shoulder.x,
             wrist.y - shoulder.y,
@@ -147,7 +146,6 @@ class HumanToAinex(Node):
                 robot.z = -human.y (up/down, inverted)
         """
 
-        """ Right """
         shoulder_wrist_mp = np.array([
             wrist.x - shoulder.x,
             wrist.y - shoulder.y,
@@ -200,9 +198,8 @@ class HumanToAinex(Node):
                 (wrist.z - elbow.z)
             ])
         )
-        # not sure about this:
+
         L1 = np.linalg.norm(shoulder_elbow_robot)
-        L2 = np.linalg.norm(elbow_wrist_robot)
         if side == "left":
             def left_shoulder_to_elbow(vec):
                 x, y, z = vec
@@ -217,15 +214,11 @@ class HumanToAinex(Node):
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
 
-                # gpts correction, works:
                 A = c1 * x + s1 * z 
                 B = - s1  * c2 * x + s2 * y + c1 * c2 * z
                 C = s1 * s2 * x + c2 * y - c1 * s2 * z + L1
                 theta_3 = np.arctan2(B, A)
-                # maybe the +- infront of sqrt should be considered somehow to reach every position?
-                # positive sign => elbow BELOW the shoulder seems to work
-                # negative sign => elbow ABOVE the shoulder seems to work
-                #theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
+
                 sqrt_term = np.sqrt(A**2 + B**2)
                 elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
                 theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, C)
@@ -251,66 +244,15 @@ class HumanToAinex(Node):
                 s2 = np.sin(theta_2)
                 c2 = np.cos(theta_2)
 
-                # gpts correction, works:
                 A = c1 * x + s1 * z 
                 B = - s1  * c2 * x - s2 * y + c1 * c2 * z
                 C = -(s1 * s2 * x + c2 * y + c1 * s2 * z + L1)
                 theta_3 = np.arctan2(B, A)
-                # maybe the +- infront of sqrt should be considered somehow to reach every position?
-                # positive sign => elbow BELOW the shoulder seems to work
-                # negative sign => elbow ABOVE the shoulder seems to work
-                #theta_4 = np.arctan2(np.sqrt(A**2 + B**2), C)
+
                 sqrt_term = np.sqrt(A**2 + B**2)
                 elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
                 theta_4 = np.arctan2(sqrt_term if elbow_above_shoulder else sqrt_term, C)
 
-                return theta_3, theta_4
-
-                #chatgpts correction of your arctan2 version:
-                # TODO change signs of FK aka in Transformation matrices to match the negation of theta_3 here;
-                theta_3 = -np.arctan2(-s1*c2*x - s2*y + c1*c2*z, c1*x + s1*z)
-                proj = -s1*s2*x + c2*y + c1*s2*z + L1
-                # for this theta_4 following works: lift arms straighupwards, bending sideways, doing 90 degree elbow bend inwards (but only up to a point, but this also happens to left arm) -> seems to almost everything work
-                # what doesnt work: turning arm inside aka when both arms are on the thighs -> arm bends outwards (to the left) -> seems like theta_4 sign is still wrong
-
-                # positive sign => elbow BELOW the shoulder seems to work
-                # negative sign => elbow ABOVE the shoulder seems to work
-                if L2 < self._eps:
-                    return 0.0, 0.0
-                proj_clamped = np.clip(proj, -L2, L2)
-                if abs(proj - proj_clamped) > self._eps:
-                    self.get_logger().warn(
-                        f"proj out of range (proj={proj:.6f}, L2={L2:.6f}), clamping for theta_4."
-                    )
-                proj = proj_clamped
-                radicand = L2**2 - proj**2
-                if radicand < 0.0:
-                    self.get_logger().warn(
-                        f"Negative radicand for theta_4 sqrt (radicand={radicand:.6f}); clamping to 0."
-                    )
-                    radicand = 0.0
-                sqrt_term = np.sqrt(radicand)
-                theta_4 = np.arctan2(sqrt_term, -proj)
-
-                # with non inverted theta_3, this produces shit
-                # with inverted theta_3, this produces arm bending inwards (to the right) -> could be correct!!! -> test tomorrow on real robot
-                # what works: arm inside aka both arms on the thighs -> arm bends inwards (to the right)
-                # what doesnt work: bending arm upwards with elbow bend -> arm bends outwards (to the left) -> seems like theta_4 sign is still wrong -> could this come from an unreachable position?
-                theta_4 = np.arctan2(-sqrt_term, -proj)
-
-                # checking if arm is above shoulder to choose correct sign for theta_4:
-                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
-                # reuse sqrt_term from clamped radicand
-                theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, -proj)
-
-                """
-                #### Mini report of theta_4 behaviour:
-                - theta_4 with negative sign seems to be more correct, as the wrist is bend inwards like all the time in the videos
-                - for theta_4 with positive sign, the wrist is bend outwards in most poses, which seems wrong
-                - however, with negative theta_4, the wrist turns inwards instead of outwards for positions where the elbow is above the shoulder 
-                """
-
-                #self.get_logger().info(f"theta_3: {theta_3}, theta_4: {theta_4}")
                 return theta_3, theta_4
             
             sho_elbow_horiz, sho_elbow_vert = right_shoulder_to_elbow(shoulder_elbow_robot)
