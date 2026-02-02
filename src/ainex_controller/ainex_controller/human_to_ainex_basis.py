@@ -261,7 +261,7 @@ class HumanToAinex(Node):
             sho_pitch, sho_roll = left_shoulder_to_elbow(shoulder_elbow_robot)
             elbow_pitch, elbow_yaw = left_elbow_to_wrist(elbow_wrist_robot, sho_pitch, sho_roll)
             
-            return sho_pitch, -sho_elbow_vert, elbow_pitch, -elbow_yaw
+            return sho_pitch, -sho_roll, elbow_pitch, -elbow_yaw
 
         elif side == "right":
             def right_shoulder_to_elbow(vec):
