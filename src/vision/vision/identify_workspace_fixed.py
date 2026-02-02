@@ -60,7 +60,7 @@ class ArucoMarkerTfBroadcaster(Node):
         self.declare_parameter('camera_offset_rpy', [0.0, 0.0, 0.0])      # rad (keep 0 if rotation matches)
 
         self.declare_parameter('marker_frame_prefix', 'aruco_')
-        self.declare_parameter('marker_length', 0.05)  # meters # 0.05 // 0.03
+        self.declare_parameter('marker_length', 0.035)  # meters # 0.05 // 0.03
 
         self.declare_parameter('aruco_dict', 'DICT_6X6_250') # DICT_6X6_250 // 5x5_1000
 

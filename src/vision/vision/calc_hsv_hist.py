@@ -49,6 +49,27 @@ current_directory = Path.cwd()
 #     )
 # }
 
+# # only front FACE new image
+# rois = {
+#     "green":(
+#         [452, 70],
+#         [525, 70],
+#         [525, 128],
+#         [452, 128]),
+#     "red": (
+#         [224, 81],
+#         [308, 81],
+#         [308, 150],
+#         [224, 150],
+#     ),
+#     "blue": (
+#         [38, 90],
+#         [115, 90],
+#         [115, 150],
+#         [38, 150],
+#     )
+# }
+
 # only front FACE new image
 rois = {
     "green":(

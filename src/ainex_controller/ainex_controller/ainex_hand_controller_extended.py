@@ -22,7 +22,7 @@ class HandController:
         hard_stop_on_singularity: bool = False,
         k_null: float = 1.0,
         q_nominal: np.ndarray | None = None,
-        lam_base: float = 8e-2, # higher values mean more damping, lower values mean less damping
+        lam_base: float = 1e-3, # higher values mean more damping, lower values mean less damping
         lam_gain: float = 5e-5, # higher values mean more damping near singularity
     ):
         """
@@ -50,7 +50,7 @@ class HandController:
         self.w_threshold = 5e-4  # manipulability threshold
 
         self.Kp = Kp if Kp is not None else np.array([4.0, 4.0, 4.0])
-        self.Kd = Kd if Kd is not None else np.array([0.7, 0.7, 0.7])
+        self.Kd = Kd if Kd is not None else np.array([0.9, 0.9, 0.9])
 
         # toggles / params
         self.enable_nullspace = enable_nullspace
