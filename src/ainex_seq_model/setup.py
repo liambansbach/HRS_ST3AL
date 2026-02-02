@@ -28,7 +28,6 @@ setup(
     entry_points={
         'console_scripts': [
             'call_server = ainex_seq_model.call_server:main',
-            'sequence_model_3D = ainex_seq_model.sequence_model_node:main',
             'sequence_model = ainex_seq_model.sequence_model_node:main',
         ],
     },
