@@ -14,6 +14,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', 'vision', 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'models'), glob('models/*.task')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=[
         'setuptools',
@@ -35,6 +36,7 @@ setup(
             'detect_cubes_simple = vision.detect_cubes_simple:main',
             'mp_pose = vision.mp_upperbodypose_node:main',
             'identify_workspace = vision.identify_workspace:main',
+            'identify_workspace_fixed = vision.identify_workspace_fixed:main',
         ],
     },
 )

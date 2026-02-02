@@ -49,26 +49,69 @@ current_directory = Path.cwd()
 #     )
 # }
 
+# # only front FACE new image
+# rois = {
+#     "green":(
+#         [452, 70],
+#         [525, 70],
+#         [525, 128],
+#         [452, 128]),
+#     "red": (
+#         [224, 81],
+#         [308, 81],
+#         [308, 150],
+#         [224, 150],
+#     ),
+#     "blue": (
+#         [38, 90],
+#         [115, 90],
+#         [115, 150],
+#         [38, 150],
+#     )
+# }
+
+# # only front FACE new image
+# rois = {
+#     "green":(
+#         [139, 396],
+#         [210, 396],
+#         [210, 435],
+#         [139, 435]),
+#     "red": (
+#         [308, 401],
+#         [394, 401],
+#         [394, 436],
+#         [308, 436],
+#     ),
+#     "blue": (
+#         [500, 387],
+#         [547, 387],
+#         [547, 414],
+#         [500, 414],
+#     )
+# }
+
 # only front FACE new image
 rois = {
     "green":(
-        [452, 70],
-        [525, 70],
-        [525, 128],
-        [452, 128]),
+        [129, 389],
+        [186, 389],
+        [186, 416],
+        [129, 416]),
     "red": (
-        [224, 81],
-        [308, 81],
-        [308, 150],
-        [224, 150],
+        [295, 386],
+        [394, 386],
+        [394, 415],
+        [295, 415],
     ),
     "blue": (
-        [38, 90],
-        [115, 90],
-        [115, 150],
-        [38, 150],
+        [495, 370],
+        [544, 370],
+        [544, 400],
+        [495, 400],
     )
 }
+
 
 def load_img(path):
     """Load an image from disk (BGR) or raise if missing."""
@@ -128,15 +171,15 @@ def comput_hist(roi_dict, img, save=False):
         cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
 
         if save:
-            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new.npy") 
+            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new3.npy") 
             np.save(out, hist)
-            print(f"Gespeichert: hist_{color}_front-face_new.npy")
+            print(f"Gespeichert: hist_{color}_front-face_new3.npy")
 
         print("save?", save)
 
 def main():
     """Run an interactive ROI preview and export histograms from a fixed reference image."""
-    path = Path.joinpath(current_directory, "imgs/hsv_reference_2.png")     # TODO adapt path
+    path = Path.joinpath(current_directory, "imgs/hsv_reference_4.png")     # TODO adapt path
     print("Loading image from:", path)
     img = load_img(str(path))
     show_img(img)

@@ -37,8 +37,15 @@ class AinexRobot():
         # publish initial joint states
         self.publish_joint_states()
 
-        self.left_arm_ids = self.robot_model.get_arm_ids("left")
-        self.right_arm_ids = self.robot_model.get_arm_ids("right")
+        #self.left_arm_ids = self.robot_model.get_arm_ids("left")
+        #self.right_arm_ids = self.robot_model.get_arm_ids("right")
+
+        self.left_arm_q_ids  = self.robot_model.get_arm_ids("left")
+        self.right_arm_q_ids = self.robot_model.get_arm_ids("right")
+
+        self.left_arm_v_ids  = self.robot_model.get_arm_v_ids("left")
+        self.right_arm_v_ids = self.robot_model.get_arm_v_ids("right")
+
 
     def move_to_initial_position(self, q_init: np.ndarray = None):
         """Move robot to initial position."""
@@ -46,8 +53,8 @@ class AinexRobot():
         self.node.get_logger().warn(f"Moved to q_init = {self.q}")
 
         if not self.sim:
-            self.send_cmd(self.q, 3.0)
-            time.sleep(3.0)
+            self.send_cmd(self.q, 5.0)
+            time.sleep(5.0)
         self.publish_joint_states()
         self.robot_model.update_model(self.q, self.v)
         
@@ -57,11 +64,19 @@ class AinexRobot():
     
     def update(self, v_cmd_left: np.ndarray, v_cmd_right: np.ndarray, dt: float):
         """Update the robot model with new desired velocities."""
+        # if v_cmd_left is not None:
+        #     self.v[self.left_arm_ids] = v_cmd_left
+        # if v_cmd_right is not None:
+        #     self.v[self.right_arm_ids] = v_cmd_right
+        # self.q += self.v * dt
+
         if v_cmd_left is not None:
-            self.v[self.left_arm_ids] = v_cmd_left
+            self.v[self.left_arm_v_ids] = v_cmd_left
         if v_cmd_right is not None:
-            self.v[self.right_arm_ids] = v_cmd_right
+            self.v[self.right_arm_v_ids] = v_cmd_right
         self.q += self.v * dt
+
+
         self.robot_model.update_model(self.q, self.v)
         
         # visualize joint states in RViz
@@ -81,11 +96,24 @@ class AinexRobot():
 
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
+        
         q_cmd[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('r_sho_pitch')] *= 1.0
+
+        q_cmd[self.robot_model.get_joint_id('l_el_pitch')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('r_el_pitch')] *= 1.0
+
+        # q_cmd[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        # q_cmd[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        
         # l/r_sho_roll has an offset in the real robot
-        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] -= 1.4
-        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] += 1.4
+        
+        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] *= -1.0
+        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] *= -1.0
+
+        q_cmd[self.robot_model.get_joint_id('r_sho_roll')] += 1.45
+        q_cmd[self.robot_model.get_joint_id('l_sho_roll')] -= 1.45
+
         
         self.joint_controller.setJointPositions(self.joint_names, q_cmd.tolist(), dt, unit="rad")
 
@@ -95,11 +123,20 @@ class AinexRobot():
 
         ## Adjust for real robot differences
         # l/r_sho_pitch has flipped direction in the real robot
-        q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= -1.0
-        q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
-         # l/r_sho_roll has an offset in the real robot
-        q_real[self.robot_model.get_joint_id('r_sho_roll')] += 1.4
-        q_real[self.robot_model.get_joint_id('l_sho_roll')] -= 1.4
+
+        # q_real[self.robot_model.get_joint_id('l_sho_pitch')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_sho_pitch')] *= -1.0
+
+        # q_real[self.robot_model.get_joint_id('l_el_pitch')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_el_pitch')] *= -1.0      
+        # q_real[self.robot_model.get_joint_id('l_el_yaw')] *= 1.0
+        # q_real[self.robot_model.get_joint_id('r_el_yaw')] *= 1.0
+        
+        # # l/r_sho_roll has an offset in the real robot
+        
+        
+        # q_real[self.robot_model.get_joint_id('r_sho_roll')] -= 1.45
+        # q_real[self.robot_model.get_joint_id('l_sho_roll')] += 1.45
 
         return q_real
     
@@ -112,6 +149,47 @@ class AinexRobot():
         joint_state_msg.velocity = self.v.tolist()
         self.joint_states_pub.publish(joint_state_msg)
 
+    def set_grippers(self, l_pos: float = None, r_pos: float = None, duration: float = 1.0):
+        """
+        Set gripper joint positions in *model space* (URDF/pin order).
+        Works in sim (updates q + publishes joint_states) and real (also sends cmd).
+        """
+        l_gripper_id = self.robot_model.get_joint_id("l_gripper")
+        r_gripper_id = self.robot_model.get_joint_id("r_gripper")
 
+        if l_pos is not None:
+            self.q[l_gripper_id] = float(l_pos)
+        if r_pos is not None:
+            self.q[r_gripper_id] = float(r_pos)
+
+        # keep model consistent
+        self.robot_model.update_model(self.q, self.v)
+        self.publish_joint_states()
+
+        if not self.sim:
+            # send full-body q command (includes grippers)
+            self.send_cmd(self.q, duration)
+
+    def open_hand(self, which: str = "both", duration: float = 1.0):
+        # NOTE: choose values that match your robot conventions
+        if which == "both":
+            self.set_grippers(l_pos=-1.65, r_pos=1.65, duration=duration)
+        elif which == "left":
+            self.set_grippers(l_pos=-1.65, r_pos=None, duration=duration)
+        elif which == "right":
+            self.set_grippers(l_pos=None, r_pos=1.65, duration=duration)
+        else:
+            self.node.get_logger().warn(f"open_hand: unknown which='{which}'")
+
+    def close_hand(self, which: str = "both", duration: float = 1.0):
+        # NOTE: pick “closed” values; placeholders:
+        if which == "both":
+            self.set_grippers(l_pos=-0.4, r_pos=0.4, duration=duration)
+        elif which == "left":
+            self.set_grippers(l_pos=-0.4, r_pos=None, duration=duration)
+        elif which == "right":
+            self.set_grippers(l_pos=None, r_pos=0.4, duration=duration)
+        else:
+            self.node.get_logger().warn(f"close_hand: unknown which='{which}'")
 
 

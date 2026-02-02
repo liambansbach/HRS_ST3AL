@@ -98,7 +98,7 @@ class HandController():
 
         # TODO: Broadcast target pose as TF for visualization
         # not sure if correct:
-        self.br = TransformBroadcaster(self.node)
+        #self.br = TransformBroadcaster(self.node)
         t_target = TransformStamped()
         t_target.header.stamp = self.node.get_clock().now().to_msg()
         t_target.header.frame_id = "base_link"
@@ -123,20 +123,29 @@ class HandController():
         # and keep only the columns corresponding to the arm joints.
         # You can obtain the arm joint indices using AinexModel.get_arm_ids(). 
         J = self.robot_model.left_hand_jacobian() if self.arm_side == 'left' else self.robot_model.right_hand_jacobian()
-        J_pos = J[:3, :][:, self.robot_model.get_arm_ids(self.arm_side)]
+        J_pos = J[:3, :][:, self.robot_model.get_arm_v_ids(self.arm_side)]
 
         ## Check manipulability to prevent singularities
         # TODO: calculate the manipulability index with the task Jacobian J_pos.
         # Hint: w = sqrt(det(J * J^T))
         # If the manipulability is below the threshold self.w_threshold,
         # stop the robot by setting u to zero.
-        w = np.sqrt(np.linalg.det(J_pos @ J_pos.T))
+        
+        #w = np.sqrt(np.linalg.det(J_pos @ J_pos.T))
+
+        A = J_pos @ J_pos.T
+        detA = np.linalg.det(A)
+        w = np.sqrt(max(detA, 0.0))
+
 
         if w >= self.w_threshold:
             # TODO: get current pose and velocity from the robot model
             # We assume the model is already updated with the latest joint states
             self.x_cur = self.robot_model.left_hand_pose() if self.arm_side == 'left' else self.robot_model.right_hand_pose()
             self.v_cur = self.robot_model.left_hand_velocity() if self.arm_side == 'left' else self.robot_model.right_hand_velocity()
+
+            v_lin = self.v_cur.linear  # shape (3,)
+
 
             # TODO: Calculate the time elapsed since the start of the trajectory
             # Then update the spline to get desired position at current time
@@ -146,13 +155,20 @@ class HandController():
 
             # TODO: Implement the Cartesian PD control law for end-effector POSITION only (no orientation part)
             # compute desired end-effector velocity
-            xdot_des = self.Kp * (self.x_des - self.x_cur.translation) - self.Kd * self.v_cur[:3]
+            #xdot_des = self.Kp * (self.x_des - self.x_cur.translation) - self.Kd * self.v_cur[:3]
+            xdot_des = self.Kp * (self.x_des - self.x_cur.translation) - self.Kd * v_lin
 
             # TODO: compute the control command (velocities for the arm joints)
             # by mapping the desired end-effector velocity to arm joint velocities 
             # using the Jacobian pseudoinverse
-            J_pinv = np.linalg.pinv(J_pos)
-            u = J_pinv @ xdot_des 
+
+            # J_pinv = np.linalg.pinv(J_pos)
+            # u = J_pinv @ xdot_des
+             
+            lam = 1e-2  # z.B. 1e-3 bis 1e-1 testen
+            J = J_pos
+            u = J.T @ np.linalg.inv(J @ J.T + (lam**2) * np.eye(3)) @ xdot_des
+  
 
         else:
             u = np.zeros(4)

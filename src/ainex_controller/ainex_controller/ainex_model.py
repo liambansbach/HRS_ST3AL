@@ -72,8 +72,11 @@ class AiNexModel:
 
         # TODO: calculate end-effector velocities using the Jacobians
         # Hint: v_cartesian = J * v_joint
-        self.v_left = self.J_left @ self.v
-        self.v_right = self.J_right @ self.v
+        # self.v_left = self.J_left @ self.v
+        # self.v_right = self.J_right @ self.v
+
+        self.v_left = pin.Motion(self.J_left @ self.v)
+        self.v_right = pin.Motion(self.J_right @ self.v)
 
         # TODO: broadcast tf transformation of hand links w.r.t. base_link for visualization in RViz
         # Hint: take a look at the tf2_ros documentation for examples
@@ -178,6 +181,29 @@ class AiNexModel:
             arm_ids.append(q_idx)
 
         return arm_ids
+    
+
+    def get_arm_v_ids(self, arm_side: str):
+        """Velocity indices (idx_v) for arm joints, for slicing Jacobians."""
+        if arm_side == 'left':
+            prefix = 'l_'
+        elif arm_side == 'right':
+            prefix = 'r_'
+        else:
+            raise ValueError("arm_side must be 'left' or 'right'")
+
+        arm_joint_names = [
+            prefix + 'sho_pitch',
+            prefix + 'sho_roll',
+            prefix + 'el_pitch',
+            prefix + 'el_yaw',
+        ]
+
+        v_ids = []
+        for name in arm_joint_names:
+            jid = self.model.getJointId(name)
+            v_ids.append(self.model.joints[jid].idx_v)  # <-- important
+        return v_ids
 
     def get_joint_id(self, joint_name: str) -> int:
         """Get the joint id from the pinocchio model."""

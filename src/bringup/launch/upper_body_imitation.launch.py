@@ -33,6 +33,15 @@ def generate_launch_description():
     existing_python_path = os.environ.get('PYTHONPATH', '')
     new_python_path = f"{venv_site_packages}:{cmeel_site_packages}:{existing_python_path}"
 
+    # Ensure the pinocchio shared libs from the venv take precedence over system/ROS libs
+    cmeel_prefix_lib = os.path.join(
+        venv_site_packages,
+        'cmeel.prefix',
+        'lib'
+    )
+    existing_ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+    new_ld_library_path = f"{cmeel_prefix_lib}:{existing_ld_library_path}" if existing_ld_library_path else cmeel_prefix_lib
+
     """ Defines all nodes to be launched """
     camera_sub = Node(
         package='vision',
@@ -61,7 +70,10 @@ def generate_launch_description():
         executable='ainex_imitation_control_node',
         output='screen',
         parameters=[{}],
-        additional_env={'PYTHONPATH': new_python_path}
+        additional_env={
+            'PYTHONPATH': new_python_path,
+            'LD_LIBRARY_PATH': new_ld_library_path,
+        }
     )
 
     return LaunchDescription([

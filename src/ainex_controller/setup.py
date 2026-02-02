@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'ainex_controller'
 
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,6 +31,8 @@ setup(
             'human_to_ainex_basis = ainex_controller.human_to_ainex_basis:main',
             'ainex_imitation_control_node = ainex_controller.ainex_imitation_control_node:main',
             'project_cubes_onto_workspace = ainex_controller.project_cubes_onto_workspace:main',
+            'stack_cubes = ainex_controller.stack_cubes:main',
+            'stack_cubes_fixed = ainex_controller.stack_cubes_fixed:main',
         ],
     },
 )
