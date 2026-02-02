@@ -23,7 +23,7 @@ class HandController:
         k_null: float = 1.0,
         q_nominal: np.ndarray | None = None,
         lam_base: float = 1e-3, # higher values mean more damping, lower values mean less damping
-        lam_gain: float = 5e-5, # higher values mean more damping near singularity
+        lam_gain: float = 8e-5, # higher values mean more damping near singularity
     ):
         """
         enable_nullspace:

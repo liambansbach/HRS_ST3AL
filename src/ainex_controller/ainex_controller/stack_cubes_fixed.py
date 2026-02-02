@@ -85,7 +85,7 @@ class StackCubesNode(Node):
             self.robot_model, 
             arm_side="left",
             enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
-            k_null=0.6,                # <--- nullspace strength
+            k_null=0.8,                # <--- nullspace strength
             adaptive_damping=True,
             hard_stop_on_singularity=False,
         )
@@ -95,7 +95,7 @@ class StackCubesNode(Node):
             self.robot_model, 
             arm_side="right",
             enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
-            k_null=0.6,                # <--- nullspace strength
+            k_null=0.8,                # <--- nullspace strength
             adaptive_damping=True,
             hard_stop_on_singularity=False,
         )
@@ -364,7 +364,7 @@ class StackCubesNode(Node):
         place_clear   = self.cube_size + 0.01
 
         # wenn TF im Zentrum: "Place" genau auf stack_p
-        z_place       = 0.05
+        z_place       = 0.045
 
         steps: List[Step] = []
 
@@ -373,7 +373,7 @@ class StackCubesNode(Node):
             arm = self.choose_arm_for_cube(pick_p)
 
             y_offset = 0.018
-            y_offset = y_offset * -1.0 if arm == "right" else y_offset*1.0
+            y_offset = y_offset * -1.0 if arm == "right" else y_offset*0.8
 
             # Center-auf-Center stacken: i * cube_size
             stack_p = base_p + np.array([0.0, 0.0, i * self.cube_size])
@@ -399,7 +399,7 @@ class StackCubesNode(Node):
 
             # 2) runter auf die Stack-Position (Center)
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                            target_translation=stack_p + np.array([x_offset+0.003, y_offset, z_place]),
+                            target_translation=stack_p + np.array([x_offset+0.0025, y_offset, z_place]),
                             duration=1.5, wait_after=0.1))
 
             # 3) loslassen
@@ -407,7 +407,7 @@ class StackCubesNode(Node):
 
             # 4) retreat: wieder hoch (konstant)
             steps.append(Step(kind="move", hand=arm, rel_or_abs="abs",
-                            target_translation=stack_p + np.array([x_offset, y_offset*6, place_clear]),
+                            target_translation=stack_p + np.array([x_offset, y_offset*7, place_clear*3]),
                             duration=2.0, wait_after=0.2)) # big y offset to get out of the stacking area
 
         return steps
