@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-
-""" 
-    Calculates wrist position target and elbow angle target for the Ainex robot
-      based on human pose estimation.
-    Focuses on mapping 2D pose estimation to the robot, as depth estimation is considered highly uncertain.
-
-    HRV => Human Reach Vector, vector from humans shoulder to the wrist
-    HOA => Human Over Arm, segment between shoulder and elbow
-    HOA => Human Under Arm, segment between elbow and wrist
-"""
-
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -18,6 +7,49 @@ from geometry_msgs.msg import Point, TransformStamped
 from tf2_ros import TransformBroadcaster
 
 from ainex_interfaces.msg import UpperbodyPose, RobotImitationTargets
+
+"""
+Human to AiNEX Robot Motion Retargeting Node
+============================================
+
+This ROS 2 node acts as a bridge between human pose estimation (specifically from 
+MediaPipe) and the AiNEX robot's control system. It performs real-time motion 
+retargeting, converting normalized human upper-body coordinates into specific 
+joint targets and Cartesian wrist coordinates for the robot.
+
+Key Features:
+-------------
+1.  **Coordinate Frame Transformation**: Maps MediaPipe camera coordinates to the 
+    AiNEX robot frame:
+    - Robot X (Forward) = -Human Z
+    - Robot Y (Left)    =  Human X
+    - Robot Z (Up)      = -Human Y
+
+2.  **Reach Scaling**: Scales human arm movements to the robot's physical dimensions 
+    (0.187m max reach), calculating a "reaching factor" based on how fully extended 
+    the human arm is.
+
+3.  **Analytical Inverse Kinematics**: Computes specific joint angles (Shoulder Pitch/Roll, 
+    Elbow Pitch/Yaw) based on the geometric vectors between shoulder, elbow, and wrist.
+
+ROS 2 Interface:
+----------------
+**Node Name:** `human_to_ainex`
+
+**Subscribers:**
+  - `/mp_pose/upper_body_rig` (`ainex_interfaces/UpperbodyPose`): 
+    Real-time 3D coordinates of the human shoulders, elbows, and wrists.
+
+**Publishers:**
+  - `/robot_imitation_targets` (`ainex_interfaces/RobotImitationTargets`): 
+    Calculated joint angles and Cartesian wrist targets for the robot controller.
+
+**Broadcasters:**
+  - `tf2_ros.TransformBroadcaster`: 
+    Broadcasts visualization frames (`wrist_left_target_rviz`, `wrist_right_target_rviz`) 
+    relative to the robot's shoulder links for debugging in Rviz.
+
+"""
 
 class HumanToAinex(Node):
     def __init__(self):
@@ -40,12 +72,14 @@ class HumanToAinex(Node):
 
         self.robot_full_reach_length = 0.187 
         self.get_logger().info('Human to Robot basis tranformation node started! Listening to "/mp_pose/upper_body_rig"')
+        self._eps = 1e-6
 
     def bodypose_cb(self, msg: UpperbodyPose):
         """ 
             Callback for upperbody pose subscriber
             Also calculates and publisher robot targets for each message
         """
+
         self.left_shoulder = msg.left_shoulder 
         self.left_elbow = msg.left_elbow   
         self.left_wrist = msg.left_wrist   
@@ -53,19 +87,21 @@ class HumanToAinex(Node):
         self.right_shoulder = msg.right_shoulder 
         self.right_elbow = msg.right_elbow   
         self.right_wrist = msg.right_wrist   
+
         self.publish_robot_targets()
 
     def publish_robot_targets(self):
         """     
-            Assigns values to msg for publishing based on wirst and elbow target calculations 
+            Assigns values to msg for publishing based on 
+            wirst coordinate and joint target calculations 
         """
-        wrist_target_left = self.robot_wrist_target(self.left_shoulder, self.left_elbow, self.left_wrist)
-        wrist_target_right = self.robot_wrist_target(self.right_shoulder, self.right_elbow, self.right_wrist)
+        wrist_target_left = self.robot_wrist_target_left(self.left_shoulder, self.left_elbow, self.left_wrist)
+        wrist_target_right = self.robot_wrist_target_right(self.right_shoulder, self.right_elbow, self.right_wrist)
         
         # Compute vector angles for loose joint targets
-        theta_left = self.compute_arm_vector_angles(self.left_shoulder, self.left_elbow, self.left_wrist)
-        theta_right = self.compute_arm_vector_angles(self.right_shoulder, self.right_elbow, self.right_wrist)
-        
+        theta_left = self.calc_theta_angles("left", self.left_shoulder, self.left_elbow, self.left_wrist)
+        theta_right = self.calc_theta_angles("right", self.right_shoulder, self.right_elbow, self.right_wrist)
+
         self.visualize_targets(wrist_target_left, "left")
         self.visualize_targets(wrist_target_right, "right")
 
@@ -74,7 +110,6 @@ class HumanToAinex(Node):
         msg.wrist_target_left = wrist_target_left
         msg.wrist_target_right = wrist_target_right
 
-        # Vector angle fields
         msg.shoulder_pitch_target_left = float(theta_left[0])
         msg.shoulder_roll_target_left = float(theta_left[1])
         msg.elbow_pitch_target_left = float(theta_left[2])
@@ -93,12 +128,56 @@ class HumanToAinex(Node):
             Uses human direction from shoulder to wrist and a reaching factor [0-1] to determine robot wrist target
             
             3D coordinate mapping (MediaPipe image coords -> Robot coords):
-                robot.x = human.z (depth/forward)
+                robot.x = -human.z (depth/forward, inverted)
                 robot.y = human.x (left/right)
                 robot.z = -human.y (up/down, inverted)
         """
 
-        """ Left """
+        shoulder_wrist_mp = np.array([
+            wrist.x - shoulder.x,
+            wrist.y - shoulder.y,
+            wrist.z - shoulder.z
+        ])
+        shoulder_elbow_mp = np.array([
+            elbow.x - shoulder.x,
+            elbow.y - shoulder.y,
+            elbow.z - shoulder.z
+        ])
+        elbow_wrist_mp = np.array([
+            wrist.x - elbow.x,
+            wrist.y - elbow.y,
+            wrist.z - elbow.z
+        ])
+
+        shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
+        # checking for zero-length vector to avoid division by zero
+        shoulder_wrist_mp_unit = np.zeros(3) if shoulder_wrist_mp_len < self._eps else shoulder_wrist_mp / shoulder_wrist_mp_len
+
+        denom = np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp)
+        # checking for zero-length denom to avoid division by zero
+        reaching_factor = 0.0 if denom < self._eps else shoulder_wrist_mp_len / denom
+
+        full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
+        wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
+
+        wrist_target_robot = Point()
+        wrist_target_robot.x = wrist_target[0]  
+        wrist_target_robot.y = wrist_target[1]  
+        wrist_target_robot.z = wrist_target[2] 
+
+        return wrist_target_robot
+    
+    def robot_wrist_target_right(self, shoulder, elbow, wrist):
+        """ 
+            Calculates target position for robot wrist by mapping from humans full reach to robots full reach
+            Uses human direction from shoulder to wrist and a reaching factor [0-1] to determine robot wrist target
+            
+            3D coordinate mapping (MediaPipe image coords -> Robot coords):
+                robot.x = -human.z (depth/forward, inverted)
+                robot.y = human.x (left/right)
+                robot.z = -human.y (up/down, inverted)
+        """
+
         shoulder_wrist_mp = np.array([
             wrist.x - shoulder.x,
             wrist.y - shoulder.y,
@@ -106,7 +185,10 @@ class HumanToAinex(Node):
         ])
 
         shoulder_wrist_mp_len = np.linalg.norm(shoulder_wrist_mp)
-        shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
+        if shoulder_wrist_mp_len < self._eps:
+            shoulder_wrist_mp_unit = np.zeros(3)
+        else:
+            shoulder_wrist_mp_unit = shoulder_wrist_mp / shoulder_wrist_mp_len
 
         shoulder_elbow_mp = np.array([
             elbow.x - shoulder.x,
@@ -118,7 +200,8 @@ class HumanToAinex(Node):
             wrist.y - elbow.y,
             wrist.z - elbow.z
         ])
-        reaching_factor = shoulder_wrist_mp_len / (np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp))
+        denom = np.linalg.norm(shoulder_elbow_mp) + np.linalg.norm(elbow_wrist_mp)
+        reaching_factor = 0.0 if denom < self._eps else shoulder_wrist_mp_len / denom
 
         full_reach_reaching_direction = shoulder_wrist_mp_unit * self.robot_full_reach_length
         wrist_target = self.mp_to_ainex_frame(full_reach_reaching_direction * reaching_factor)
@@ -129,123 +212,88 @@ class HumanToAinex(Node):
         wrist_target_robot.z = wrist_target[2] 
 
         return wrist_target_robot
+    
+    def calc_theta_angles(self, side, shoulder, elbow, wrist):
 
-    def compute_arm_vector_angles(self, shoulder, elbow, wrist):
-        """
-        Compute horizontal (azimuth) and vertical (elevation) angles for arm vectors.
-        
-        These angles represent the direction of:
-          - Shoulder->Elbow vector (upper arm)
-          - Elbow->Wrist vector (forearm)
-        
-        relative to a reference direction (pointing forward/down).
-        
-        The angles are computed in the robot coordinate frame:
-          - robot.x = forward (MediaPipe -z)
-          - robot.y = left/right (MediaPipe x)
-          - robot.z = up/down (MediaPipe -y)
-        
-        Args:
-            side: 'left' or 'right'
-        
-        Returns:
-            (sho_elbow_horiz, sho_elbow_vert, elbow_wrist_horiz, elbow_wrist_vert)
-            All angles in radians.
-        """
-
-        # Compute vectors in MediaPipe coordinates
+        # Computing vectors in AiNEX coordinates
         shoulder_elbow_robot = self.mp_to_ainex_frame(
             np.array([
-                elbow.x - shoulder.x,
-                elbow.y - shoulder.y,
-                elbow.z - shoulder.z
+                (elbow.x - shoulder.x),
+                (elbow.y - shoulder.y),
+                (elbow.z - shoulder.z)
             ])
         )
+
         elbow_wrist_robot = self.mp_to_ainex_frame(
             np.array([
-                wrist.x - elbow.x,
-                wrist.y - elbow.y,
-                wrist.z - elbow.z
+                (wrist.x - elbow.x),
+                (wrist.y - elbow.y),
+                (wrist.z - elbow.z)
             ])
         )
 
-        def vector_to_angles(vec):
-            """
-            Convert a 3D vector to horizontal (azimuth) and vertical (elevation) angles.
+        L1 = np.linalg.norm(shoulder_elbow_robot)
+        if side == "left":
+            def left_shoulder_to_elbow(vec):
+                x, y, z = vec
+                theta_1 = np.arctan2(x, -z)
+                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
+
+                return theta_1, theta_2
+            def left_elbow_to_wrist(vec, theta_1, theta_2):
+                x, y, z = vec
+                s1 = np.sin(theta_1)
+                c1 = np.cos(theta_1)
+                s2 = np.sin(theta_2)
+                c2 = np.cos(theta_2)
+
+                A = c1 * x + s1 * z 
+                B = - s1  * c2 * x + s2 * y + c1 * c2 * z
+                C = s1 * s2 * x + c2 * y - c1 * s2 * z + L1
+                theta_3 = np.arctan2(B, A)
+
+                sqrt_term = np.sqrt(A**2 + B**2)
+                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
+                theta_4 = np.arctan2(-sqrt_term if elbow_above_shoulder else sqrt_term, C)
+
+                return theta_3, theta_4
             
-            Horizontal angle: angle in XY plane from X axis (atan2(y, x))
-            Vertical angle: angle from XY plane (atan2(z, sqrt(x²+y²)))
-            """
-            x, y, z = vec
-            length = np.linalg.norm(vec)
-            if length < 1e-6:
-                return 0.0, 0.0
-
-
-            # Horizontal angle (azimuth): angle in XY plane
-            horiz = np.arctan2(y, x)
+            sho_pitch, sho_roll = left_shoulder_to_elbow(shoulder_elbow_robot)
+            elbow_pitch, elbow_yaw = left_elbow_to_wrist(elbow_wrist_robot, sho_pitch, sho_roll)
             
-            # Vertical angle (elevation): angle from XY plane
-            xy_length = np.sqrt(x**2 + y**2)
-            vert = np.arctan2(z, xy_length)
+            return sho_pitch, -sho_roll, elbow_pitch, -elbow_yaw
 
-
-            # # try with dot product:
-            # # Calculate dot product
-            # dot_product_xy = np.dot(x, y)
-            # dot_product_
-            # # Calculate magnitudes (lengths of the vectors)
-            # magnitude_x = np.linalg.norm(x)
-            # magnitude_y = np.linalg.norm(y)
-            # magnitude_z = np.linalg.norm(z)
-
-            # # Calculate angle in radians
-            # angle_radians = np.arccos(dot_product / (magnitude_A * magnitude_B))
-
-            # # Convert radians to degrees
-            # horiz = np.degrees(angle_radians)
+        elif side == "right":
+            def right_shoulder_to_elbow(vec):
+                x, y, z = vec
+                theta_1 = np.arctan2(x, -z)
+                theta_2 = np.arctan2(np.sqrt(x**2 + z**2), -y)
+                return theta_1, theta_2
             
+            def right_elbow_to_wrist(vec, theta_1, theta_2):
+                x, y, z = vec
+                s1 = np.sin(theta_1)
+                c1 = np.cos(theta_1)
+                s2 = np.sin(theta_2)
+                c2 = np.cos(theta_2)
 
+                A = c1 * x + s1 * z 
+                B = - s1  * c2 * x - s2 * y + c1 * c2 * z
+                C = -(s1 * s2 * x + c2 * y + c1 * s2 * z + L1)
+                theta_3 = np.arctan2(B, A)
 
-            return horiz, vert
-        
-        def left_shoulder_to_elbow(vec):
-            x, y, z = vec
-            theta_1 = np.arctan2(x, -z)
-            theta_2 = np.arctan2(np.sqrt(x**2 + z**2), y)
-            return theta_1, theta_2
-        
-        def left_elbow_to_wrist(theta_1, theta_2):
-            u = np.array([
-                np.sin(theta_1)*np.sin(theta_2), 
-                np.cos(theta_2),
-                -np.cos(theta_1)*np.sin(theta_2)
-            ])
-            c = np.array([
-                np.cos(theta_1), 
-                0,
-                np.sin(theta_1)
-            ])
-            s = np.array([
-                -np.sin(theta_1)*np.cos(theta_2), 
-                np.sin(theta_2),
-                np.cos(theta_1)*np.cos(theta_2)
-            ])
+                sqrt_term = np.sqrt(A**2 + B**2)
+                elbow_above_shoulder = shoulder_elbow_robot[2] > 0.0
+                theta_4 = np.arctan2(sqrt_term if elbow_above_shoulder else sqrt_term, C)
 
-            proj_u = np.dot(elbow_wrist_robot, u)
-            proj_c = np.dot(elbow_wrist_robot, c)
-            proj_s = np.dot(elbow_wrist_robot, s) 
-
-            theta_3 = np.arctan2(proj_s, proj_c)
-            theta_4 = np.arctan2(np.sqrt(proj_c**2 + proj_s**2), proj_u)
-
-            return theta_3, theta_4
+                return theta_3, theta_4
             
-        sho_elbow_horiz, sho_elbow_vert = left_shoulder_to_elbow(shoulder_elbow_robot)
-        elbow_wrist_horiz, elbow_wrist_vert = left_elbow_to_wrist(sho_elbow_horiz, sho_elbow_vert)
-        
-        return sho_elbow_horiz, -sho_elbow_vert, elbow_wrist_horiz, -elbow_wrist_vert
-    
+            sho_pitch, sho_roll = right_shoulder_to_elbow(shoulder_elbow_robot)
+            elbow_pitch, elbow_yaw = right_elbow_to_wrist(elbow_wrist_robot, sho_pitch, sho_roll)
+            
+            return sho_pitch, sho_roll, -elbow_pitch, elbow_yaw
+
+
     def mp_to_ainex_frame(self, mp_frame):
         ainex_frame = np.array([
             -mp_frame[2],   #x = -mp.z (forward)
@@ -259,24 +307,7 @@ class HumanToAinex(Node):
         """ 
             Visualizes the detected wrist positions and elbow angles in TF
         """
-        """ # Nimm den ersten Marker (falls du mehrere willst, musst du hier erweitern)
-        tvec = self.tvecs.astype(float)   # [tx, ty, tz] im OpenCV-Kameraframe
-        rvec = self.rvecs.astype(float)
-        # === Low-pass Filter auf Translation ===
-        if self.last_tvec is None:
-            tvec_f = tvec
-        else:
-            tvec_f = self.alpha_pos * tvec + (1.0 - self.alpha_pos) * self.last_tvec
-        self.last_tvec = tvec_f
-
-        # === Low-pass Filter auf Rotation (auf rvec) ===
-        if self.last_rvec is None:
-            rvec_f = rvec
-        else:
-            rvec_f = self.alpha_rot * rvec + (1.0 - self.alpha_rot) * self.last_rvec
-        self.last_rvec = rvec_f """
-
-        # === Koordinatensystem-Anpassung ===
+        
         tx = xyz.x
         ty = xyz.y
         tz = xyz.z
@@ -292,14 +323,11 @@ class HumanToAinex(Node):
                 t_msg.child_frame_id = "wrist_right_target_rviz"
 
 
-        t_msg.transform.translation.x = float(tx)    # vor der Kamera
+        t_msg.transform.translation.x = float(tx)   # vor der Kamera
         t_msg.transform.translation.y = float(ty)   # links/rechts
         t_msg.transform.translation.z = float(tz)   # hoch/runter
 
-        # Rotation aus gefiltertem rvec
-        #R_cv, _ = cv2.Rodrigues(rvec_f_i)
-        #r = R.from_matrix(R_cv)
-        qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0 # r.as_quat()  # [x, y, z, w]
+        qx, qy, qz, qw = 0.0, 0.0, 0.0, 1.0 
 
         t_msg.transform.rotation.x = float(qx)
         t_msg.transform.rotation.y = float(qy)
