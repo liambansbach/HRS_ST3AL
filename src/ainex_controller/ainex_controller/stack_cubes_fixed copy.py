@@ -84,11 +84,6 @@ class StackCubesNode(Node):
             Empty, "workflow/execute", self._on_execute, 10
         )
 
-        self.abort_sub = self.create_subscription(
-            Empty, "workflow/abort", self._on_abort, 10
-        )
-
-
 
         # -----------------------------
         # Robot model / controller setup
@@ -163,6 +158,7 @@ class StackCubesNode(Node):
         self.clear_sequence_on_finish = True
         self.did_init = False
 
+        self.ready_to_stack: bool = False
         self.pending_events: List[ManipulationEvent] = []
 
         self.timer = self.create_timer(self.dt, self.control_loop)
@@ -453,32 +449,122 @@ class StackCubesNode(Node):
         self.execute_requested = True
         self.get_logger().info("Execute trigger received.")
 
-    def _on_abort(self, _msg: Empty):
-        self.get_logger().warn("Abort received: stopping sequence and going idle.")
-
-        # Stop planning/execution triggers
-        self.execute_requested = False
-        self.have_recording = False
-        self.pending_events = []
-
-        # Stop the running sequence immediately
-        self.clear_sequence()
-        self.phase = "idle"
-
-        # IMPORTANT: make sure no stale velocity command keeps being applied
-        if self.v_left is not None:
-            self.v_left = np.zeros_like(self.v_left)
-        if self.v_right is not None:
-            self.v_right = np.zeros_like(self.v_right)
-
-        # (Optional) if you want it to return to initial pose on abort:
-        self.move_to_initial_position()
-
-
     # -----------------------------
     # SERVER: keyboard-driven START/STOP recording
     # -----------------------------
-    
+    def start_recording(self):
+        if self.recording_active or self.waiting_for_server_result:
+            self.get_logger().warn("Recording already active or waiting for result; ignoring START.")
+            return
+
+        # (Optional safety) Only allow starting from idle
+        if self.phase != "idle" or self.has_pending_steps():
+            self.get_logger().warn("Not idle / sequence running; ignoring START.")
+            return
+
+        self.get_logger().info("Waiting for action server 'record_demo'...")
+        if not self.client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("Action server 'record_demo' not available.")
+            return
+
+        goal = RecordDemo.Goal()
+        goal.min_world_states = int(self.min_world_states)
+        goal.idle_timeout_sec = float(self.idle_timeout_sec)
+
+        self.get_logger().info(
+            f"START: sending goal (min_world_states={goal.min_world_states}, idle_timeout_sec={goal.idle_timeout_sec})"
+        )
+
+        future = self.client.send_goal_async(goal)
+        future.add_done_callback(self._goal_response_cb)
+
+    def stop_recording(self):
+        if (not self.recording_active) or (self.goal_handle is None):
+            self.get_logger().warn("Not recording; ignoring STOP.")
+            return
+
+        self.get_logger().warn("STOP: canceling active goal...")
+        cancel_future = self.goal_handle.cancel_goal_async()
+        cancel_future.add_done_callback(self._cancel_done_cb)
+
+    def toggle_recording(self):
+        if self.recording_active:
+            self.stop_recording()
+        else:
+            self.start_recording()
+
+    def _goal_response_cb(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error("Goal rejected by server.")
+            self.recording_active = False
+            self.goal_handle = None
+            return
+
+        self.goal_handle = goal_handle
+        self.recording_active = True
+        self.waiting_for_server_result = True
+        self.get_logger().info("Server accepted goal: recording ACTIVE.")
+
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._result_cb)
+
+    def _cancel_done_cb(self, future):
+        cancel_response = future.result()
+        if len(cancel_response.goals_canceling) > 0:
+            self.get_logger().warn("Cancel accepted; waiting for result...")
+        else:
+            self.get_logger().warn("Cancel rejected or nothing to cancel; still waiting for result if running.")
+
+    def _result_cb(self, future):
+        res = future.result().result
+
+        # Recording session ended (either DONE or CANCELED)
+        self.pending_events = list(res.events)
+        self.ready_to_stack = True
+
+        self.recording_active = False
+        self.waiting_for_server_result = False
+        self.goal_handle = None
+
+        self.get_logger().info(
+            f"SERVER RESULT: ready_to_stack=True (events={len(self.pending_events)}, world_states={len(res.world_states)})"
+        )
+
+
+    def _start_keyboard_thread(self):
+        self._kb_stop = threading.Event()
+        self._kb_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
+        self._kb_thread.start()
+
+    def _keyboard_loop(self):
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+
+        def restore():
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            except Exception:
+                pass
+
+        atexit.register(restore)
+
+        try:
+            tty.setcbreak(fd)  # single-key reads (no Enter)
+            while rclpy.ok() and not self._kb_stop.is_set():
+                r, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if not r:
+                    continue
+                ch = sys.stdin.read(1)
+
+                if ch.lower() == "r":
+                    self.toggle_recording()
+                elif ch.lower() == "q":
+                    self.get_logger().info("Quit requested from keyboard.")
+                    rclpy.shutdown()
+                    break
+        finally:
+            restore()
 
     # -----------------------------
     # Main loop

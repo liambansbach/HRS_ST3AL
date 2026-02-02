@@ -20,6 +20,8 @@ from rclpy.executors import MultiThreadedExecutor
 
 from std_msgs.msg import String
 from ainex_interfaces.action import RecordDemo
+from std_msgs.msg import Empty
+
 
 
 class State(Enum):
@@ -69,6 +71,15 @@ class WorkflowController(Node):
             self, RecordDemo, self.record_action_name, callback_group=self.cb_group
         )
 
+        self.record_result_pub = self.create_publisher(RecordDemo.Result, "workflow/record_result", 10)
+
+        self.exec_pub = self.create_publisher(Empty, "workflow/execute", 10)
+
+        self.abort_pub = self.create_publisher(Empty, "workflow/abort", 10)
+
+
+
+
         # Track current action goal
         self.record_goal_handle = None
         self.record_result_future = None
@@ -112,10 +123,12 @@ class WorkflowController(Node):
             if self.state != State.WAIT_EXEC:
                 self.get_logger().warn(f"Ignoring 'z' because state is {self.state.value} (need WAIT_EXEC).")
                 return
-            self.get_logger().info("TODO: execution stage will be added next (Step 5).")
-            self.set_state(State.EXECUTING, "Command 'z' (placeholder)")
-            self.set_state(State.IDLE, "Execution placeholder done")
+
+            self.get_logger().info("Publishing execute trigger.")
+            self.exec_pub.publish(Empty())
+            self.set_state(State.EXECUTING, "Command 'z' (execute)")
             return
+
 
         if cmd in ("t", "p"):
             self.get_logger().info(f"Command '{cmd}' received (currently unused placeholder).")
@@ -124,15 +137,22 @@ class WorkflowController(Node):
         self.get_logger().warn(f"Unknown command '{cmd}'")
 
     def handle_force_idle(self) -> None:
-        """Force state back to IDLE; cancel recording if currently active."""
+        # If executing, tell stack node to stop
+        if self.state == State.EXECUTING:
+            self.get_logger().info("Force IDLE: aborting execution ...")
+            self.abort_pub.publish(Empty())
+            self.set_state(State.IDLE, "Command 'i' (abort execute -> idle)")
+            return
+
+        # If recording, cancel action goal
         if self.state == State.RECORDING and self.record_goal_handle is not None:
             self.get_logger().info("Force IDLE: canceling active RecordDemo goal ...")
             self.cancel_future = self.record_goal_handle.cancel_goal_async()
             self.cancel_future.add_done_callback(self.on_cancel_done)
-            # We’ll transition to IDLE in on_cancel_done
             return
 
         self.set_state(State.IDLE, "Command 'i' (force idle)")
+
 
     def handle_start_recording(self) -> None:
         """Send a RecordDemo goal if currently IDLE."""
@@ -192,16 +212,15 @@ class WorkflowController(Node):
             return
         self.last_feedback_log_time = now
 
-        try:
-            self.get_logger().info(
-                f"[feedback] status={fb.status} events={fb.num_events} world_states={fb.num_world_states}"
-            )
-        except Exception:
-            # If feedback fields differ, we at least avoid crashing
-            self.get_logger().info("[feedback] received")
+        # try:
+        #     self.get_logger().info(
+        #         f"[feedback] status={fb.status} events={fb.num_events} world_states={fb.num_world_states}"
+        #     )
+        # except Exception:
+        #     # If feedback fields differ, we at least avoid crashing
+        #     self.get_logger().info("[feedback] received")
 
     def on_record_result(self, future) -> None:
-        """Handle action completion and store events/world_states."""
         result_wrap = future.result()
         if result_wrap is None:
             self.get_logger().error("RecordDemo result: None (unexpected).")
@@ -212,7 +231,10 @@ class WorkflowController(Node):
         status = result_wrap.status
         result = result_wrap.result
 
-        # Store the data even if empty (helps debugging)
+        # Publish result for stack node
+        self.record_result_pub.publish(result)
+
+        # Store the data
         self.last_recording = RecordingData(
             session_id=int(result.session_id),
             events=list(result.events),
@@ -228,6 +250,7 @@ class WorkflowController(Node):
 
         self.cleanup_recording()
         self.set_state(State.WAIT_EXEC, "Recording successful (press 'z' to execute)")
+
 
     def on_cancel_done(self, future) -> None:
         """Handle cancel completion."""

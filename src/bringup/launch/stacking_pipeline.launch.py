@@ -68,6 +68,18 @@ def generate_launch_description():
     delayed_nodes = TimerAction(
         period=0.001,
         actions=[
+            Node(
+                package='bringup',
+                executable='workflow_controller',
+                name='workflow_controller',
+                output='screen',
+                emulate_tty=True,
+                parameters=[
+                    {'record_action_name': 'record_demo'},
+                    {'min_world_states': 3},
+                    {'idle_timeout_sec': 5.0},
+                ],
+            ),
             # Node(
             #     package='vision',
             #     executable='camera_sub',
@@ -104,6 +116,7 @@ def generate_launch_description():
                 name='stack_cubes_fixed',
                 output='screen'
             ),
+
 
             # Node(
             #     package='ainex_controller',
