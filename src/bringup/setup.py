@@ -28,6 +28,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'keyboard_listener =bringup.keyboard_listener:main',
+            'keyboard_logger =bringup.keyboard_logger:main',
+            'workflow_controller =bringup.workflow_controller:main',
         ],
     },
 )
