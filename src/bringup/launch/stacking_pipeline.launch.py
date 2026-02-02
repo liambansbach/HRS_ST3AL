@@ -66,14 +66,14 @@ def generate_launch_description():
 
     # Delay your nodes to ensure TF tree is alive
     delayed_nodes = TimerAction(
-        period=0.5,
+        period=1.0,
         actions=[
-            Node(
-                package='vision',
-                executable='camera_sub',
-                name='camera_sub',
-                output='screen'
-            ),
+            # Node(
+            #     package='vision',
+            #     executable='camera_sub',
+            #     name='camera_sub',
+            #     output='screen'
+            # ),
             Node(
                 package='vision',
                 executable='detect_cubes_simple',

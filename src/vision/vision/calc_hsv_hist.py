@@ -70,26 +70,48 @@ current_directory = Path.cwd()
 #     )
 # }
 
+# # only front FACE new image
+# rois = {
+#     "green":(
+#         [139, 396],
+#         [210, 396],
+#         [210, 435],
+#         [139, 435]),
+#     "red": (
+#         [308, 401],
+#         [394, 401],
+#         [394, 436],
+#         [308, 436],
+#     ),
+#     "blue": (
+#         [500, 387],
+#         [547, 387],
+#         [547, 414],
+#         [500, 414],
+#     )
+# }
+
 # only front FACE new image
 rois = {
     "green":(
-        [139, 396],
-        [210, 396],
-        [210, 435],
-        [139, 435]),
+        [129, 389],
+        [186, 389],
+        [186, 416],
+        [129, 416]),
     "red": (
-        [308, 401],
-        [394, 401],
-        [394, 436],
-        [308, 436],
+        [295, 386],
+        [394, 386],
+        [394, 415],
+        [295, 415],
     ),
     "blue": (
-        [500, 387],
-        [547, 387],
-        [547, 414],
-        [500, 414],
+        [495, 370],
+        [544, 370],
+        [544, 400],
+        [495, 400],
     )
 }
+
 
 def load_img(path):
     """Load an image from disk (BGR) or raise if missing."""
@@ -149,15 +171,15 @@ def comput_hist(roi_dict, img, save=False):
         cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
 
         if save:
-            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new2.npy") 
+            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new3.npy") 
             np.save(out, hist)
-            print(f"Gespeichert: hist_{color}_front-face_new2.npy")
+            print(f"Gespeichert: hist_{color}_front-face_new3.npy")
 
         print("save?", save)
 
 def main():
     """Run an interactive ROI preview and export histograms from a fixed reference image."""
-    path = Path.joinpath(current_directory, "imgs/hsv_reference_3.png")     # TODO adapt path
+    path = Path.joinpath(current_directory, "imgs/hsv_reference_4.png")     # TODO adapt path
     print("Loading image from:", path)
     img = load_img(str(path))
     show_img(img)

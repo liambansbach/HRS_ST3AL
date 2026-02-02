@@ -30,14 +30,14 @@ class CubeDetector(Node):
         self.frame = None
 
         # Histogram paths
-        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red_front-face_new2.npy")
+        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red_front-face_new3.npy")
         self.green_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_green_front-face_new2.npy")
-        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new2.npy")
+        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new3.npy")
 
         # --- [TUNE] global parameters ---
         self.min_blob_area = 1250 #750
-        self.conf_thresh = 10.0  #10
-        self.square_scale = 0.9  #0.9
+        self.conf_thresh = 10  #10
+        self.square_scale = 1.0  #0.9
         self.ema_alpha = 0.3     #0.3
         self.roi_search_scale = 1.5 #1.5
         self.keep_last_on_fail = True
@@ -63,22 +63,22 @@ class CubeDetector(Node):
         # per-color params
         self.color_params = {
             "red": {
-                "sv_min": (0, 50, 30), # 0, 70, 50
+                "sv_min": (0, 50, 30), # 0, 70, 50  // 0, 50, 30
                 "blur": (3, 3),
                 "bp_tozero": 20,
                 "tight_thr": 70,
             },
             "green": {
-                "sv_min": (0, 25, 25), # 0, 35, 35
-                "blur": (5, 5),
+                "sv_min": (0, 255*0.38, 255*0.57), # 0, 35, 35
+                "blur": (3, 3),
                 "bp_tozero": 30,
                 "tight_thr": 80,
             },
             "blue": {
-                "sv_min": (0, 255*0.12, 255*0.60), # 0, 35, 35
-                "blur": (5, 5),
-                "bp_tozero": 30,
-                "tight_thr": 60,
+                "sv_min": (0, 255*0.55, 255*0.22), # 0, 35, 35
+                "blur": (3, 3),
+                "bp_tozero": 20,
+                "tight_thr": 70,
             },
         }
 

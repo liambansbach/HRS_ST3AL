@@ -50,7 +50,7 @@ class HandController:
         self.w_threshold = 5e-4  # manipulability threshold
 
         self.Kp = Kp if Kp is not None else np.array([4.0, 4.0, 4.0])
-        self.Kd = Kd if Kd is not None else np.array([0.9, 0.9, 0.9])
+        self.Kd = Kd if Kd is not None else np.array([0.4, 0.4, 0.4])
 
         # toggles / params
         self.enable_nullspace = enable_nullspace
