@@ -20,6 +20,7 @@ from ainex_interfaces.msg import ManipulationEvent
 from ainex_controller.ainex_model import AiNexModel
 from ainex_controller.ainex_robot import AinexRobot
 from ainex_controller.ainex_hand_controller import HandController
+from ainex_controller.ainex_hand_controller_extended import HandController as HandControllerExtended
 
 
 @dataclass
@@ -76,8 +77,28 @@ class StackCubesNode(Node):
         self.robot_model = AiNexModel(self, urdf_path)
         self.ainex_robot = AinexRobot(self, self.robot_model, self.dt, sim=self.sim)
 
-        self.left_hand_controller = HandController(self, self.robot_model, arm_side="left")
-        self.right_hand_controller = HandController(self, self.robot_model, arm_side="right")
+        #self.left_hand_controller = HandController(self, self.robot_model, arm_side="left")
+        #self.right_hand_controller = HandController(self, self.robot_model, arm_side="right")
+
+        self.left_hand_controller = HandControllerExtended(
+            self, 
+            self.robot_model, 
+            arm_side="left",
+            enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
+            k_null=0.6,                # <--- nullspace strength
+            adaptive_damping=True,
+            hard_stop_on_singularity=False,
+        )
+
+        self.right_hand_controller = HandControllerExtended(
+            self, 
+            self.robot_model, 
+            arm_side="right",
+            enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
+            k_null=0.6,                # <--- nullspace strength
+            adaptive_damping=True,
+            hard_stop_on_singularity=False,
+        )
 
         # -----------------------------
         # Initial pose

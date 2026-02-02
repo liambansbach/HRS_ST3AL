@@ -7,6 +7,8 @@ import numpy as np
 from ainex_controller.ainex_model import AiNexModel
 from ainex_controller.ainex_robot import AinexRobot
 from ainex_controller.ainex_hand_controller import HandController
+from ainex_controller.ainex_hand_controller_extended import HandController as HandControllerExtended
+
 
 def main():
     rclpy.init()
@@ -40,14 +42,33 @@ def main():
     ainex_robot.move_to_initial_position(q_init)
 
     # Create HandController instances for left and right hands
-    left_hand_controller = HandController(node, robot_model, arm_side='left')
-    right_hand_controller = HandController(node, robot_model, arm_side='right')
+    #left_hand_controller = HandController(node, robot_model, arm_side='left')
+    #right_hand_controller = HandController(node, robot_model, arm_side='right')
+    left_hand_controller = HandControllerExtended(
+        node, 
+        robot_model, 
+        arm_side="left",
+        enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
+        k_null=0.6,                # <--- nullspace strength
+        adaptive_damping=True,
+        hard_stop_on_singularity=False,
+    )
+
+    right_hand_controller = HandControllerExtended(
+        node, 
+        robot_model, 
+        arm_side="right",
+        enable_nullspace=True,     # true for better singularity handling // false is the old simple controller
+        k_null=0.6,                # <--- nullspace strength
+        adaptive_damping=True,
+        hard_stop_on_singularity=False,
+    )
 
     # TODO: Feel free to change to other target poses for testing
 
     # left hand target pose
     left_target = pin.SE3.Identity()
-    left_target.translation = np.array([0.15, -0.02, 0.0])  # Move 3 cm forward
+    left_target.translation = np.array([0.08, -0.04, 0.05])  # Move 3 cm forward
     left_hand_controller.set_target_pose(left_target, duration=3.0, type='abs')
 
     # # right hand target pose
@@ -58,7 +79,7 @@ def main():
 
     # right hand target pose
     right_target = pin.SE3.Identity()
-    right_target.translation = np.array([0.0, -0.4, 0.0])  # Move up by 2 cm :: z= nach oben, y= zur seite, x= nach vorne
+    right_target.translation = np.array([0.1, -0.15, 0.0])  # Move up by 2 cm :: z= nach oben, y= zur seite, x= nach vorne
     right_hand_controller.set_target_pose(right_target, duration=3.0, type='abs')
 
     v_cmd_left = None
