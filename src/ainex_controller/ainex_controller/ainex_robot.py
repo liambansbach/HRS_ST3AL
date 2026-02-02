@@ -173,11 +173,11 @@ class AinexRobot():
     def open_hand(self, which: str = "both", duration: float = 1.0):
         # NOTE: choose values that match your robot conventions
         if which == "both":
-            self.set_grippers(l_pos=-1.5, r_pos=1.5, duration=duration)
+            self.set_grippers(l_pos=-1.65, r_pos=1.65, duration=duration)
         elif which == "left":
-            self.set_grippers(l_pos=-1.5, r_pos=None, duration=duration)
+            self.set_grippers(l_pos=-1.65, r_pos=None, duration=duration)
         elif which == "right":
-            self.set_grippers(l_pos=None, r_pos=1.5, duration=duration)
+            self.set_grippers(l_pos=None, r_pos=1.65, duration=duration)
         else:
             self.node.get_logger().warn(f"open_hand: unknown which='{which}'")
 

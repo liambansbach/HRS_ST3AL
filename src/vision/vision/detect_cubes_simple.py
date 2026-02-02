@@ -30,21 +30,21 @@ class CubeDetector(Node):
         self.frame = None
 
         # Histogram paths
-        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red_front-face_new.npy")
-        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_green_front-face_new.npy")
-        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new.npy")
+        self.red_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_red_front-face_new2.npy")
+        self.green_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_green_front-face_new2.npy")
+        self.blue_hist_path = Path.joinpath(self.cwd, "src/vision/histograms/hist_blue_front-face_new2.npy")
 
         # --- [TUNE] global parameters ---
-        self.min_blob_area = 750
-        self.conf_thresh = 10.0
-        self.square_scale = 0.9
-        self.ema_alpha = 0.3
-        self.roi_search_scale = 1.5
+        self.min_blob_area = 1250 #750
+        self.conf_thresh = 10.0  #10
+        self.square_scale = 0.9  #0.9
+        self.ema_alpha = 0.3     #0.3
+        self.roi_search_scale = 1.5 #1.5
         self.keep_last_on_fail = True
 
-        self.bp_tight_thr = 5
-        self.jump_center_px = 100
-        self.jump_area_ratio = 2.0
+        self.bp_tight_thr = 5 # 0.5
+        self.jump_center_px = 100 # 100
+        self.jump_area_ratio = 2.0 # 2.0
 
         # Optical flow parameters
         self.flow_min_pts = 25
@@ -63,22 +63,22 @@ class CubeDetector(Node):
         # per-color params
         self.color_params = {
             "red": {
-                "sv_min": (0, 70, 50),
+                "sv_min": (0, 50, 30), # 0, 70, 50
                 "blur": (3, 3),
                 "bp_tozero": 20,
                 "tight_thr": 70,
             },
             "green": {
-                "sv_min": (0, 35, 35),
+                "sv_min": (0, 25, 25), # 0, 35, 35
                 "blur": (5, 5),
                 "bp_tozero": 30,
                 "tight_thr": 80,
             },
             "blue": {
-                "sv_min": (0, 35, 35),
+                "sv_min": (0, 255*0.12, 255*0.60), # 0, 35, 35
                 "blur": (5, 5),
                 "bp_tozero": 30,
-                "tight_thr": 80,
+                "tight_thr": 60,
             },
         }
 
@@ -184,7 +184,7 @@ class CubeDetector(Node):
         blur_k = p["blur"]
         tozero = p["bp_tozero"]
 
-        mask_sv = cv2.inRange(hsv, sv_min, (179, 255, 255))
+        mask_sv = cv2.inRange(hsv, sv_min, (356, 255, 255)) #179
 
         bp = cv2.calcBackProject([h], [0], hist, [0, 180], 1)
         bp = cv2.GaussianBlur(bp, blur_k, 0)

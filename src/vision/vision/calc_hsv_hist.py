@@ -73,21 +73,21 @@ current_directory = Path.cwd()
 # only front FACE new image
 rois = {
     "green":(
-        [452, 70],
-        [525, 70],
-        [525, 128],
-        [452, 128]),
+        [139, 396],
+        [210, 396],
+        [210, 435],
+        [139, 435]),
     "red": (
-        [224, 81],
-        [308, 81],
-        [308, 150],
-        [224, 150],
+        [308, 401],
+        [394, 401],
+        [394, 436],
+        [308, 436],
     ),
     "blue": (
-        [38, 90],
-        [115, 90],
-        [115, 150],
-        [38, 150],
+        [500, 387],
+        [547, 387],
+        [547, 414],
+        [500, 414],
     )
 }
 
@@ -149,15 +149,15 @@ def comput_hist(roi_dict, img, save=False):
         cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
 
         if save:
-            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new.npy") 
+            out = Path.joinpath(current_directory, f"src/vision/histograms/hist_{color}_front-face_new2.npy") 
             np.save(out, hist)
-            print(f"Gespeichert: hist_{color}_front-face_new.npy")
+            print(f"Gespeichert: hist_{color}_front-face_new2.npy")
 
         print("save?", save)
 
 def main():
     """Run an interactive ROI preview and export histograms from a fixed reference image."""
-    path = Path.joinpath(current_directory, "imgs/hsv_reference_2.png")     # TODO adapt path
+    path = Path.joinpath(current_directory, "imgs/hsv_reference_3.png")     # TODO adapt path
     print("Loading image from:", path)
     img = load_img(str(path))
     show_img(img)
