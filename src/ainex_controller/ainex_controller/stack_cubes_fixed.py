@@ -150,8 +150,11 @@ class StackCubesNode(Node):
         # ActionClient to server
         # -----------------------------
         self.client = ActionClient(self, RecordDemo, "record_demo")
+
+        # Recording state
+        self.goal_handle = None
+        self.recording_active = False
         self.waiting_for_server_result = False
-        self
 
         # -----------------------------
         # Startup behavior
@@ -161,7 +164,8 @@ class StackCubesNode(Node):
             self.ready_to_stack = True
             self.get_logger().info("TEST: ready_to_stack=True (fake server says: can start stacking).")
         else:
-            self.start_recording_and_wait_result()
+            self.get_logger().info("Keyboard control: press 'r' to START/STOP recording, 'q' to quit.")
+            self._start_keyboard_thread()
 
     # -----------------------------
     # Time helpers
