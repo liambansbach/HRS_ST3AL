@@ -476,11 +476,6 @@ class StackCubesNode(Node):
 
 
     # -----------------------------
-    # SERVER: keyboard-driven START/STOP recording
-    # -----------------------------
-    
-
-    # -----------------------------
     # Main loop
     # -----------------------------
     def control_loop(self):

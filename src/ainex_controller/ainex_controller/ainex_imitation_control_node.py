@@ -59,7 +59,7 @@ class ImitationControlNode(Node):
         self.theta_dot_max = self.declare_parameter('theta_dot_max', 5).value
 
         # Set simulation mode (True: RViz, False: real robot)!
-        self.sim = self.declare_parameter('sim', True).value
+        self.sim = self.declare_parameter('sim', False).value
 
         # set joint limits
         self.theta_min_right = self.declare_parameter('theta_min_right', [-2.09, -2.09, -2.09, -1.9]).value

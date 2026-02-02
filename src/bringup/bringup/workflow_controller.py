@@ -22,6 +22,11 @@ from std_msgs.msg import String
 from ainex_interfaces.action import RecordDemo
 from std_msgs.msg import Empty
 
+import os
+import signal
+import subprocess
+
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class State(Enum):
@@ -29,6 +34,7 @@ class State(Enum):
     RECORDING = "RECORDING"
     WAIT_EXEC = "WAIT_EXEC"
     EXECUTING = "EXECUTING"
+    IMITATION = "IMITATION"
 
 
 @dataclass
@@ -46,6 +52,13 @@ class WorkflowController(Node):
         self.declare_parameter("record_action_name", "record_demo")
         self.declare_parameter("min_world_states", 3)
         self.declare_parameter("idle_timeout_sec", 8.0)
+        self.declare_parameter("imitation_launch_pkg", "bringup")
+        self.declare_parameter("imitation_launch_file", "upper_body_imitation.launch.py")
+
+        self.imitation_launch_pkg = self.get_parameter("imitation_launch_pkg").value
+        self.imitation_launch_file = self.get_parameter("imitation_launch_file").value
+
+        self.imitation_proc = None
 
         self.record_action_name = (
             self.get_parameter("record_action_name").get_parameter_value().string_value
@@ -76,6 +89,10 @@ class WorkflowController(Node):
         self.exec_pub = self.create_publisher(Empty, "workflow/execute", 10)
 
         self.abort_pub = self.create_publisher(Empty, "workflow/abort", 10)
+
+        #Needed for Imitation
+        self.head_pub = self.create_publisher(JointTrajectory, "/head_controller/joint_trajectory", 10)
+
 
 
 
@@ -129,14 +146,29 @@ class WorkflowController(Node):
             self.set_state(State.EXECUTING, "Command 'z' (execute)")
             return
 
+        if cmd == "p":
+            if self.state != State.IDLE:
+                self.get_logger().warn(f"Ignoring '{cmd}' because state is {self.state.value} (need IDLE).")
+                return
+            self.set_head_tilt(0.0)
+            self.start_imitation()
+            self.set_state(State.IMITATION, f"Command '{cmd}' (imitation running)")  # or add a separate IMITATION state
+            return
 
-        if cmd in ("t", "p"):
-            self.get_logger().info(f"Command '{cmd}' received (currently unused placeholder).")
+        if cmd == "t":
+            self.get_logger().info(f"Command '{cmd}' received (TEST/DEBUG - Currently unused).")
             return
 
         self.get_logger().warn(f"Unknown command '{cmd}'")
 
     def handle_force_idle(self) -> None:
+
+        # If imitation is running, stop it
+        if self.imitation_proc is not None and self.imitation_proc.poll() is None:
+            self.stop_imitation()
+            self.set_state(State.IDLE, "Command 'i' (stop imitation -> idle)")
+            return
+
         # If executing, tell stack node to stop
         if self.state == State.EXECUTING:
             self.get_logger().info("Force IDLE: aborting execution ...")
@@ -152,7 +184,6 @@ class WorkflowController(Node):
             return
 
         self.set_state(State.IDLE, "Command 'i' (force idle)")
-
 
     def handle_start_recording(self) -> None:
         """Send a RecordDemo goal if currently IDLE."""
@@ -269,6 +300,57 @@ class WorkflowController(Node):
         self.record_goal_handle = None
         self.record_result_future = None
         self.cancel_future = None
+
+    # ----------------- Imitation Launch Handling -----------------
+
+    def start_imitation(self) -> None:
+        if self.imitation_proc is not None and self.imitation_proc.poll() is None:
+            self.get_logger().warn("Imitation already running.")
+            return
+
+        cmd = ["ros2", "launch", str(self.imitation_launch_pkg), str(self.imitation_launch_file)]
+        self.get_logger().info(f"Starting imitation bringup: {' '.join(cmd)}")
+
+        # New process group so SIGINT kills the whole launch tree
+        self.imitation_proc = subprocess.Popen(
+            cmd,
+            preexec_fn=os.setsid,
+            cwd=os.getcwd(),   # important because imitation launch uses os.getcwd() :contentReference[oaicite:2]{index=2}
+        )
+
+    def stop_imitation(self) -> None:
+        if self.imitation_proc is None or self.imitation_proc.poll() is not None:
+            self.imitation_proc = None
+            return
+
+        self.get_logger().info("Stopping imitation bringup (SIGINT)...")
+        try:
+            os.killpg(os.getpgid(self.imitation_proc.pid), signal.SIGINT)
+            self.imitation_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            self.get_logger().warn("Imitation did not exit; killing (SIGKILL)...")
+            os.killpg(os.getpgid(self.imitation_proc.pid), signal.SIGKILL)
+        finally:
+            self.imitation_proc = None
+
+    def set_head_tilt(self, tilt: float, pan: float = 0.0, duration_s: float = 1.0):
+        traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
+
+        # Most head controllers want both joints, not just tilt
+        traj.joint_names = ["head_pan", "head_tilt"]
+
+        pt = JointTrajectoryPoint()
+        pt.positions = [float(pan), float(tilt)]
+        pt.time_from_start.sec = int(duration_s)
+        pt.time_from_start.nanosec = int((duration_s - int(duration_s)) * 1e9)
+
+        traj.points = [pt]
+        self.head_pub.publish(traj)
+
+        self.get_logger().info(f"Published head trajectory pan={pan} tilt={tilt}")
+
+
 
 
 def main(args=None):
