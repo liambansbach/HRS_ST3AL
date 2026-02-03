@@ -1,4 +1,41 @@
 #!/usr/bin/env python3
+"""
+WorkspaceProjectionNode (ROS 2)
+
+Purpose
+-------
+Projects 2D cube detections (pixel bboxes) onto a workspace plane in 3D and publishes TF frames
+for the plane and for each cube center.
+
+Inputs
+------
+- ainex_interfaces/CubeBBoxList on `cubes_position`
+    Pixel-space bounding boxes for colored cubes ("red", "green", "blue").
+- sensor_msgs/CameraInfo on `camera_info` (configurable)
+    Camera intrinsics K and optional distortion coefficients D.
+- TF tree containing:
+    * world_frame <- camera_frame (e.g. base_link <- hrs_camera_link)
+    * world_frame <- aruco_<id> markers (for plane fitting)
+
+Outputs
+-------
+- TF: world_frame -> plane_frame (workspace plane)
+- TF: world_frame -> cube frames (hrs_cube_<color>) containing estimated cube centers
+
+Main steps (20 Hz)
+-----------------
+1) Choose a suitable world frame from a preference list (first transformable).
+2) Get world <- camera transform.
+3) Fit a plane from the 3D marker positions (world <- aruco_<id>).
+4) For each cube bbox:
+   - pick an anchor pixel within the bbox (u,v)
+   - compute a camera ray from pixel (optionally undistorted)
+   - intersect ray with plane
+   - shift from intersection point to cube center (front-bottom edge model)
+   - smooth position (median history + EMA)
+   - broadcast cube TF
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -20,6 +57,15 @@ from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 # Math helpers
 # -----------------------------
 def quat_to_rotmat(x, y, z, w):
+    """
+    Convert quaternion to rotation matrix.
+
+    Args:
+        x, y, z, w: Quaternion components.
+
+    Returns:
+        3x3 rotation matrix as np.ndarray (float64).
+    """
     n = x*x + y*y + z*z + w*w
     if n < 1e-12:
         return np.eye(3, dtype=np.float64)
@@ -35,6 +81,15 @@ def quat_to_rotmat(x, y, z, w):
 
 
 def rotmat_to_quat(R):
+    """
+    Convert rotation matrix to a normalized quaternion.
+
+    Args:
+        R: 3x3 rotation matrix.
+
+    Returns:
+        Quaternion tuple (x, y, z, w) as floats.
+    """
     tr = float(np.trace(R))
     if tr > 0.0:
         S = np.sqrt(tr + 1.0) * 2.0
@@ -71,7 +126,16 @@ def rotmat_to_quat(R):
 
 
 def invert_rt(R: np.ndarray, t: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Invert rigid transform p_tgt = R p_src + t  ->  p_src = R^T p_tgt - R^T t"""
+    """
+    Invert a rigid transform: p_tgt = R p_src + t  ->  p_src = R^T p_tgt - R^T t
+
+    Args:
+        R: Rotation matrix (3x3).
+        t: Translation vector (3,).
+
+    Returns:
+        (R_inv, t_inv) mapping target -> source.
+    """
     R_inv = R.T
     t_inv = -R_inv @ t
     return R_inv, t_inv
@@ -81,7 +145,15 @@ def invert_rt(R: np.ndarray, t: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 # Node
 # -----------------------------
 class WorkspaceProjectionNode(Node):
+    """
+    Projects cube bbox pixel anchors onto a workspace plane and publishes TF frames.
+
+    The plane is fitted from several ArUco marker positions in the world frame.
+    Each cube position is computed via ray-plane intersection and then smoothed.
+    """
+
     def __init__(self):
+        """Initialize parameters, TF helpers, subscriptions, and state buffers."""
         super().__init__("workspace_projection")
 
         # Frames
@@ -138,17 +210,20 @@ class WorkspaceProjectionNode(Node):
             dtype=np.float64,
         )
 
-        # Histories
+        # Histories for marker positions (median smoothing)
         self.marker_hist_len = int(self.get_parameter("marker_hist_len").value)
         self.marker_hist: Dict[int, deque] = {
             int(mid): deque(maxlen=self.marker_hist_len)
             for mid in self.get_parameter("marker_ids").value
         }
 
+        # Cube state: latest bbox + position smoothing buffers
         self.cube_hist_len = int(self.get_parameter("cube_hist_len").value)
         self.cubes = {
-            c: {"cx": 0.0, "cy": 0.0, "w": 0.0, "h": 0.0, "last_ns": 0,
-                "hist": deque(maxlen=self.cube_hist_len), "ema": None}
+            c: {
+                "cx": 0.0, "cy": 0.0, "w": 0.0, "h": 0.0, "last_ns": 0,
+                "hist": deque(maxlen=self.cube_hist_len), "ema": None
+            }
             for c in ["red", "green", "blue"]
         }
         self._last_bbox_seen_ns = 0
@@ -159,7 +234,7 @@ class WorkspaceProjectionNode(Node):
             depth=1,
         )
 
-        # Subs
+        # Subscriptions
         self.create_subscription(CubeBBoxList, "cubes_position", self._on_boxes, 10)
         self.create_subscription(
             CameraInfo,
@@ -168,6 +243,7 @@ class WorkspaceProjectionNode(Node):
             sensor_qos,
         )
 
+        # Main update loop (20 Hz)
         self.create_timer(1.0 / 20.0, self._tick)
 
         self.get_logger().info("workspace_projection node running (CameraInfo-based intrinsics)")
@@ -176,6 +252,15 @@ class WorkspaceProjectionNode(Node):
     # CameraInfo
     # -----------------------------
     def _on_caminfo(self, msg: CameraInfo):
+        """
+        Cache camera intrinsics K and optional distortion D.
+
+        Args:
+            msg: CameraInfo message.
+
+        Returns:
+            None
+        """
         if self.camera_info_received:
             return
         try:
@@ -201,6 +286,15 @@ class WorkspaceProjectionNode(Node):
     # BBoxes
     # -----------------------------
     def _on_boxes(self, msg: CubeBBoxList):
+        """
+        Cache latest cube bounding boxes (pixel space).
+
+        Args:
+            msg: CubeBBoxList containing cube bboxes.
+
+        Returns:
+            None
+        """
         now = self.get_clock().now().nanoseconds
         self._last_bbox_seen_ns = now
         for b in msg.cubes:
@@ -214,12 +308,29 @@ class WorkspaceProjectionNode(Node):
     # TF utils
     # -----------------------------
     def _can_T(self, target, source) -> bool:
+        """
+        Check whether TF transform target<-source is available.
+
+        Args:
+            target: Target frame.
+            source: Source frame.
+
+        Returns:
+            True if transform is available.
+        """
         return self.tf_buffer.can_transform(target, source, rclpy.time.Time())
 
     def _lookup_RT(self, target, source) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """
-        Returns (R, t) mapping a point from 'source' into 'target':
+        Lookup TF and return (R, t) mapping a point from 'source' into 'target':
             p_target = R @ p_source + t
+
+        Args:
+            target: Target frame.
+            source: Source frame.
+
+        Returns:
+            (R, t) if available, else None.
         """
         if not self._can_T(target, source):
             return None
@@ -239,6 +350,18 @@ class WorkspaceProjectionNode(Node):
         return Rm, t
 
     def _broadcast(self, parent: str, child: str, p: np.ndarray, Rm: Optional[np.ndarray] = None):
+        """
+        Broadcast a TF transform.
+
+        Args:
+            parent: Parent frame id.
+            child: Child frame id.
+            p: Translation vector (3,).
+            Rm: Optional rotation matrix (3x3). If None, identity quaternion is used.
+
+        Returns:
+            None
+        """
         msg = TransformStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = parent
@@ -265,19 +388,25 @@ class WorkspaceProjectionNode(Node):
     # -----------------------------
     def _pixel_to_ray_cam(self, u: float, v: float) -> np.ndarray:
         """
-        Ray direction in CAMERA FRAME (hrs_camera_link, ROS convention).
+        Compute a unit ray direction in the CAMERA FRAME (hrs_camera_link, ROS convention).
 
         If undistort_pixels=True and D is available:
-            Use cv2.undistortPoints to get normalized optical coords (x,y),
-            then d_opt=[x,y,1].
+            - Use cv2.undistortPoints to obtain normalized optical coords (x,y)
+            - Use d_opt = [x, y, 1]
         Else:
-            d_opt = K^-1 [u v 1]
+            - Use d_opt = K^-1 [u, v, 1]
 
         Then convert optical -> hrs_camera_link:
             d_cam = R_cam_opt * d_opt
+
+        Args:
+            u, v: Pixel coordinates.
+
+        Returns:
+            Normalized direction vector (3,) in camera frame.
         """
         if (not self.camera_info_received) or (self.K is None) or (self.K_inv is None):
-            # fallback safe direction
+            # Fallback safe direction (forward)
             return np.array([1.0, 0.0, 0.0], dtype=np.float64)
 
         use_undist = bool(self.get_parameter("undistort_pixels").value) and (self.D is not None)
@@ -292,15 +421,26 @@ class WorkspaceProjectionNode(Node):
         else:
             d_opt = self.K_inv @ np.array([u, v, 1.0], dtype=np.float64)
 
+        # Normalize in optical coordinates
         n = np.linalg.norm(d_opt)
         d_opt = d_opt / n if n > 1e-12 else np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
+        # Convert to ROS camera_link convention and normalize again
         d_cam = self.R_cam_opt @ d_opt
         n2 = np.linalg.norm(d_cam)
         return d_cam / n2 if n2 > 1e-12 else np.array([1.0, 0.0, 0.0], dtype=np.float64)
 
     @staticmethod
     def _fit_plane(points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Fit a plane using SVD (least squares).
+
+        Args:
+            points: Nx3 array of 3D points.
+
+        Returns:
+            (c, n): plane point (centroid) and unit normal.
+        """
         c = points.mean(axis=0)
         _, _, Vt = np.linalg.svd(points - c)
         n = Vt[-1]
@@ -312,6 +452,18 @@ class WorkspaceProjectionNode(Node):
 
     @staticmethod
     def _ray_plane(o: np.ndarray, d: np.ndarray, p0: np.ndarray, n: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Intersect ray (o + t d) with plane (p0, n).
+
+        Args:
+            o: Ray origin (3,).
+            d: Ray direction unit vector (3,).
+            p0: Point on plane (3,).
+            n: Plane normal unit vector (3,).
+
+        Returns:
+            Intersection point (3,) or None if parallel / behind origin.
+        """
         denom = float(np.dot(n, d))
         if abs(denom) < 1e-9:
             return None
@@ -320,6 +472,15 @@ class WorkspaceProjectionNode(Node):
 
     @staticmethod
     def _plane_frame_from_normal(n: np.ndarray) -> np.ndarray:
+        """
+        Construct a right-handed rotation matrix for a plane frame whose z-axis is n.
+
+        Args:
+            n: Plane normal (3,).
+
+        Returns:
+            3x3 rotation matrix with columns [x, y, z].
+        """
         z = n / (np.linalg.norm(n) + 1e-12)
         ref = np.array([1.0, 0.0, 0.0], dtype=np.float64)
         if abs(np.dot(ref, z)) > 0.9:
@@ -331,7 +492,26 @@ class WorkspaceProjectionNode(Node):
         return np.column_stack([x, y, z])
 
     @staticmethod
-    def _cube_center_from_front_bottom_edge(hit: np.ndarray, cam_origin: np.ndarray, n: np.ndarray, cube_size: float) -> np.ndarray:
+    def _cube_center_from_front_bottom_edge(
+        hit: np.ndarray, cam_origin: np.ndarray, n: np.ndarray, cube_size: float
+    ) -> np.ndarray:
+        """
+        Convert ray-plane hit point to cube center using a simple geometric model.
+
+        Model:
+        - hit is assumed to lie on the front-bottom edge of the cube footprint.
+        - Move half cube size away from camera along the plane to reach bottom center.
+        - Move half cube size along plane normal to reach cube center.
+
+        Args:
+            hit: Intersection point on plane.
+            cam_origin: Camera origin in world coordinates.
+            n: Plane normal (unit).
+            cube_size: Cube side length (m).
+
+        Returns:
+            Cube center position in world coordinates (3,).
+        """
         v_to_cam = cam_origin - hit
         v_plane = v_to_cam - n * float(np.dot(v_to_cam, n))
         norm = float(np.linalg.norm(v_plane))
@@ -348,6 +528,15 @@ class WorkspaceProjectionNode(Node):
     # World frame selection
     # -----------------------------
     def _choose_world_frame(self, cam_frame: str) -> Optional[str]:
+        """
+        Select the first available world frame that can transform to cam_frame.
+
+        Args:
+            cam_frame: Camera frame id.
+
+        Returns:
+            Selected world frame id or None.
+        """
         preferred: List[str] = list(self.get_parameter("preferred_world_frames").value)
         for w in preferred:
             if self._can_T(w, cam_frame):
@@ -358,6 +547,19 @@ class WorkspaceProjectionNode(Node):
     # Main tick
     # -----------------------------
     def _tick(self):
+        """
+        Main periodic processing loop.
+
+        Steps:
+          1) Wait for CameraInfo.
+          2) Choose world frame and get world<-camera transform.
+          3) Fit plane from marker TF positions (median-smoothed).
+          4) For each cube with recent bbox:
+             - compute anchor pixel
+             - cast ray and intersect with plane
+             - compute cube center
+             - smooth and broadcast cube TF
+        """
         if not self.camera_info_received:
             self.get_logger().warn("Waiting for CameraInfo (K,D)...", throttle_duration_sec=2.0)
             return
@@ -398,6 +600,7 @@ class WorkspaceProjectionNode(Node):
                 continue
             _, p_w = Twm
 
+            # Per-marker median smoothing (stabilize plane fit)
             self.marker_hist[mid].append(p_w)
             p_med = np.median(np.array(self.marker_hist[mid]), axis=0)
             pts.append(p_med)
@@ -409,6 +612,7 @@ class WorkspaceProjectionNode(Node):
         pts = np.array(pts, dtype=np.float64)
         p0, n = self._fit_plane(pts)
 
+        # Publish plane frame for visualization/debugging
         plane_frame = self.get_parameter("plane_frame").value
         R_plane = self._plane_frame_from_normal(n)
         self._broadcast(world, plane_frame, p0, R_plane)
@@ -424,21 +628,27 @@ class WorkspaceProjectionNode(Node):
 
         any_cube = False
         for color, s in self.cubes.items():
+            # Skip cubes with stale bbox data
             if (now - int(s["last_ns"])) > int(bbox_timeout * 1e9):
                 continue
 
+            # Anchor point inside bbox (tuned to hit the front/bottom area)
             u = float(s["cx"]) + (u_anchor - 0.5) * float(s["w"])
             v = float(s["cy"]) + v_anchor * float(s["h"])
 
+            # Ray in camera frame -> ray in world frame
             d_cam = self._pixel_to_ray_cam(u, v)
             d_w = R_wc @ d_cam
 
+            # Intersect with workspace plane
             hit = self._ray_plane(cam_origin_world, d_w, p0, n)
             if hit is None:
                 continue
 
+            # Convert intersection to cube center estimate
             p_cube = self._cube_center_from_front_bottom_edge(hit, cam_origin_world, n, cube_size)
 
+            # Smooth with median history + EMA
             s["hist"].append(p_cube)
             p_med = np.median(np.array(s["hist"]), axis=0)
 
@@ -448,9 +658,11 @@ class WorkspaceProjectionNode(Node):
                 a = ema_alpha
                 s["ema"] = (1.0 - a) * s["ema"] + a * p_med
 
+            # Broadcast cube position TF (no orientation)
             self._broadcast(world, cube_prefix + color, s["ema"], None)
             any_cube = True
 
+        # User-facing warnings to aid debugging
         if not any_cube:
             if (now - int(self._last_bbox_seen_ns)) > int(1.0 * 1e9):
                 self.get_logger().warn("No cube TF: no recent cubes_position.", throttle_duration_sec=2.0)
@@ -472,4 +684,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
