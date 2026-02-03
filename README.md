@@ -8,7 +8,9 @@ This tutorial guides you through the necessary setup in order to run the upper b
 
 Before starting this tutorial, ensure you have a working ROS2 environment installed.
 
-## Step 1: Environment Setup and Build
+### Build and Run
+
+#### Step 1: Environment Setup and Build
 
 The **MediaPipe** library does not come packaged with ROS2 and need to be installed separately (preferably in a virtual environment). In this step, we will set up a virtual environment, install dependencies, and build the ROS2 workspace.
 
@@ -42,7 +44,7 @@ The **MediaPipe** library does not come packaged with ROS2 and need to be instal
     source install/setup.bash
     ```
 
-## Step 2: Run the launch file
+#### Step 2: Run the launch file
 
 Run the launch file **from the root of the project**:
 
