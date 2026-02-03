@@ -102,6 +102,16 @@ This installs Pinocchio and all required dependencies.
 
 ---
 
+### Additional dependencies
+
+Make sure the following libraries are available:
+- numpy  
+- scipy  
+- opencv  
+
+Most of these dependencies are already included in a standard ROS 2 installation.
+
+
 ### Run the pipeline
 
 1. Build your workspace:
