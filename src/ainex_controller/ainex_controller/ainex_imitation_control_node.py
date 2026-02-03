@@ -93,9 +93,6 @@ class ImitationControlNode(Node):
             self.theta_dot_max,
             self.theta_min_left,
             self.theta_max_left,
-            None, #self.robot_model,
-            self.ainex_robot.left_arm_ids, 
-            "l_gripper_link",
             self.homogeneous_transform_params_left
         )
         self.right_hand_controller = NMPC(
@@ -108,9 +105,6 @@ class ImitationControlNode(Node):
             self.theta_dot_max,
             self.theta_min_right,
             self.theta_max_right,
-            None, #self.robot_model,
-            self.ainex_robot.right_arm_ids,
-            "r_gripper_link",
             self.homogeneous_transform_params_right
         )
         self.get_logger().info("TESTING: NMPC controllers initialized.")
