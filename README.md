@@ -54,6 +54,10 @@ ros2 launch bringup upper_body_imitation.launch.py
 
 ## Running the cube stacking pipeline
 
+
+https://github.com/user-attachments/assets/629add60-5e0f-4381-8d09-a553c41c6f74
+
+
 ### Prerequisites
 
 Before starting, make sure you have a working **ROS 2** environment.
